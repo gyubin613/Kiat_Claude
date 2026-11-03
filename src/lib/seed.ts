@@ -14,7 +14,7 @@ import {
 } from "./repo";
 import { DEFAULT_TEMPLATE } from "./email";
 import type { Attendance, Evaluator, Invite } from "./types";
-import { createAnnouncement, postAdminMessage, postEvaluatorMessage } from "./comm";
+import { createAnnouncement, postAdminMessage, postConditionMessage, postEvaluatorMessage } from "./comm";
 
 const SURNAMES = ["김", "이", "박", "최", "정", "강", "조", "윤", "장", "임", "한", "오", "서", "신", "권"];
 const GIVEN = ["민준", "서연", "도윤", "지우", "하준", "서윤", "은우", "지민", "시우", "수아", "현우", "예린", "준서", "다은", "건우", "채원", "우진", "소율", "선호", "나연", "태윤", "가은", "재원", "하린", "승민", "유진", "동현", "수빈", "정훈", "아름"];
@@ -121,7 +121,7 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
   const plan: (null | { a: Attendance; s: number[]; n?: string })[] = [
     { a: "yes", s: [0, 1] },
     { a: "yes", s: [1] },
-    { a: "conditional", s: [0, 2], n: "오후 2시 이후 참석 가능합니다." },
+    { a: "conditional", s: [0, 2], n: "오후 2시 이후에만 참석 가능한데, 오후 세션만 참여해도 괜찮을까요?" },
     { a: "no", s: [], n: "해외 출장 일정과 겹칩니다." },
     { a: "no", s: [], n: "같은 주에 다른 평가 일정이 있습니다." },
     null, // 회신 대기 (48시간 경과 → 자동 후속 안내 대상)
@@ -135,6 +135,7 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
     await applyInviteAction(e1.id, inv.evaluatorId, { type: "markSent", via: "manual" });
     const p = plan[i];
     if (p) await submitResponse(inv.token, { attendance: p.a, slotIds: p.s.map((k) => ev1.slots[k].id), note: p.n ?? "" });
+    if (p?.a === "conditional") await postConditionMessage(e1.id, inv.evaluatorId, p.n ?? "", baseUrl);
   }
 
   // 회신 대기 2명: 1명은 48시간 경과(자동 후속 대상), 1명은 20시간 경과

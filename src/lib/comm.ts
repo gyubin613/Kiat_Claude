@@ -79,6 +79,24 @@ export async function postEvaluatorMessage(token: string, body: string, baseUrl:
   return t;
 }
 
+/**
+ * 조건부 참석 회신의 '조건·문의사항'을 문의함에 등록한다.
+ * 회신 제출 직후 호출되므로 연속 전송 제한을 적용하지 않는다.
+ */
+export async function postConditionMessage(evalId: string, evaluatorId: string, note: string, baseUrl: string) {
+  const [evaluation, evaluator] = await Promise.all([getEvaluation(evalId), getEvaluator(evaluatorId)]);
+  await ensureThread(evalId, evaluatorId);
+  const msg: Message = { id: newId("m_"), from: "evaluator", kind: "condition", body: note, at: nowIso() };
+  const t = await updateWithRetry<Thread>(K.thread(evalId, evaluatorId), (cur) => append(cur, msg), "문의");
+  const notifyTo = process.env.ADMIN_NOTIFY_EMAIL;
+  if (notifyTo)
+    await deliver(notifyTo, {
+      subject: `[조건부 참석 문의] ${evaluation.name} - ${evaluator.name} 위원`,
+      body: `${evaluator.name}(${evaluator.org || "소속 미입력"}) 위원이 조건부 참석으로 회신했습니다.\n\n${note}\n\n답변·검토하기: ${baseUrl}/admin/responses?e=${evalId}`,
+    });
+  return t;
+}
+
 /** 위원이 회신 화면을 열면 관리자 메시지를 읽음 처리 */
 export async function markReadByEvaluator(evalId: string, evaluatorId: string) {
   const t = await getThread(evalId, evaluatorId);

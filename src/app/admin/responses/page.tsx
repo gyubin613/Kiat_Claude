@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
-import { ConditionReviewDialog } from "@/components/ConditionReview";
-import { api, download, errMsg, RowMenu, useToast } from "@/components/ui";
+import { ConditionAnswer } from "@/components/ConditionReview";
+import { api, download, errMsg, Modal, RowMenu, useToast } from "@/components/ui";
 import { inviteCounts, isConditionPending, slotSummary } from "@/lib/summary";
 import { conflictHits } from "@/lib/profile";
 import { DISPLAY_STATE_LABEL, inviteDisplayState, STATE_CLASS, type InviteDisplayState } from "@/lib/types";
@@ -48,7 +48,7 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
   const filters: { key: Filter; label: string; n: number }[] = [
     { key: "all", label: "전체", n: counts.total },
     { key: "pending", label: "미회신", n: counts.waiting + counts.notSent },
-    { key: "review", label: "조건 검토", n: counts.condPending },
+    { key: "review", label: "조건부 문의", n: counts.condPending },
     { key: "yes", label: "참석 가능", n: counts.yes + counts.conditional - counts.condPending },
     { key: "no", label: "불참·철회", n: counts.no + counts.withdrawn },
   ];
@@ -82,7 +82,7 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
       <div className="strip">
         <span className="item"><span className="n">{counts.responded}</span><span className="l">/ {counts.total - counts.withdrawn}명 회신</span></span>
         <span className="item ok"><span className="n">{counts.yes + counts.conditional - counts.condPending}</span><span className="l">참석 가능</span></span>
-        {counts.condPending > 0 && <span className="item warn"><span className="n">{counts.condPending}</span><span className="l">조건 검토 필요</span></span>}
+        {counts.condPending > 0 && <span className="item warn"><span className="n">{counts.condPending}</span><span className="l">조건부 문의 답변 필요</span></span>}
         <span className="item bad"><span className="n">{counts.no}</span><span className="l">불참</span></span>
         <span className="item"><span className="n">{counts.waiting + counts.notSent}</span><span className="l">미회신</span></span>
       </div>
@@ -90,28 +90,31 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
       {pendingReview.length > 0 && !locked && (
         <div className="card" style={{ borderColor: "#e8c98a" }}>
           <div className="card-head">
-            <h2>조건부 참석 검토 ({pendingReview.length})</h2>
-            <span className="small muted">수락한 위원만 최종 확정 후보에 들어갑니다.</span>
+            <h2>조건부 참석 문의 ({pendingReview.length})</h2>
+            <span className="small muted">답변을 보내면서 수락·거절을 함께 정합니다. 수락한 위원만 최종 확정 후보에 들어갑니다.</span>
           </div>
-          <div className="table-wrap">
-            <table className="table">
-              <tbody>
-                {pendingReview.map((inv) => {
-                  const v = byId.get(inv.evaluatorId);
-                  return (
-                    <tr key={inv.evaluatorId}>
-                      <td style={{ width: 180 }}><div className="who"><b>{v?.name}</b><span>{v?.org}</span></div></td>
-                      <td style={{ whiteSpace: "pre-wrap" }}>{inv.response?.note || <span className="faint">조건 미기재</span>}</td>
-                      <td className="nowrap small">{inv.response?.slotIds.map((id) => `${slotNo.get(id)}번`).join(", ")}</td>
-                      <td className="nowrap" style={{ textAlign: "right" }}>
-                        <button className="btn sm primary" onClick={() => setReview({ id: inv.evaluatorId, decision: "accepted" })}>수락</button>{" "}
-                        <button className="btn sm danger" onClick={() => setReview({ id: inv.evaluatorId, decision: "rejected" })}>거절</button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="cond-list">
+            {pendingReview.map((inv) => {
+              const v = byId.get(inv.evaluatorId);
+              return v ? (
+                <div key={inv.evaluatorId} className="cond-item">
+                  <div className="who">
+                    <b>{v.name}</b>
+                    <span>{v.org}</span>
+                    <span>{inv.round}차 초청</span>
+                  </div>
+                  <ConditionAnswer
+                    evaluation={evaluation}
+                    invite={inv}
+                    evaluator={v}
+                    onDone={() => {
+                      reload();
+                      reloadShell();
+                    }}
+                  />
+                </div>
+              ) : null;
+            })}
           </div>
         </div>
       )}
@@ -138,7 +141,7 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
                   </td>
                   <td>
                     <div className="progress">
-                      <span className="small">{s.confirmable}명{s.conditional.length ? ` + 검토 ${s.conditional.length}` : ""}</span>
+                      <span className="small">{s.confirmable}명{s.conditional.length ? ` + 답변 대기 ${s.conditional.length}` : ""}</span>
                       <div className="bar">
                         <span className="yes" style={{ width: `${Math.min(100, (s.confirmable / evaluation.seats) * 100)}%` }} />
                         <span className="cond" style={{ width: `${Math.max(0, Math.min(100 - (s.confirmable / evaluation.seats) * 100, (s.conditional.length / evaluation.seats) * 100))}%` }} />
@@ -146,11 +149,11 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
                     </div>
                   </td>
                   <td>
-                    {s.meetsSeats ? <span className="badge ok">충족</span> : s.meetsSeatsWithConditional ? <span className="badge warn">검토 후 충족 가능</span> : <span className="badge bad">{evaluation.seats - s.total}명 부족</span>}
+                    {s.meetsSeats ? <span className="badge ok">충족</span> : s.meetsSeatsWithConditional ? <span className="badge warn">조건부 수락 시 충족</span> : <span className="badge bad">{evaluation.seats - s.total}명 부족</span>}
                   </td>
                   <td className="small">
                     {[...s.yes, ...s.accepted].map((id) => byId.get(id)?.name).join(", ")}
-                    {s.conditional.length > 0 && <span style={{ color: "var(--warn)" }}> {s.conditional.map((id) => `${byId.get(id)?.name}(검토)`).join(", ")}</span>}
+                    {s.conditional.length > 0 && <span style={{ color: "var(--warn)" }}> {s.conditional.map((id) => `${byId.get(id)?.name}(답변 대기)`).join(", ")}</span>}
                   </td>
                 </tr>
               ))}
@@ -216,11 +219,11 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
                         {inv.response && inv.response.revision > 1 && <div className="faint">(수정 {inv.response.revision - 1}회)</div>}
                       </td>
                       <td className="nowrap" style={{ textAlign: "right" }}>
-                        {!locked && st === "conditional" && <button className="btn sm" onClick={() => setReview({ id: inv.evaluatorId, decision: "accepted" })}>검토</button>}
+                        {!locked && st === "conditional" && <button className="btn sm" onClick={() => setReview({ id: inv.evaluatorId, decision: "accepted" })}>답변·검토</button>}
                         {!locked && (st === "cond_accepted" || st === "cond_rejected") && (
                           <RowMenu
                             items={[
-                              { label: st === "cond_accepted" ? "거절로 변경" : "수락으로 변경", onClick: () => setReview({ id: inv.evaluatorId, decision: st === "cond_accepted" ? "rejected" : "accepted" }) },
+                              { label: "답변·결과 변경", onClick: () => setReview({ id: inv.evaluatorId, decision: st === "cond_accepted" ? "rejected" : "accepted" }) },
                               { label: "검토 취소", onClick: () => undoReview(inv.evaluatorId) },
                             ]}
                           />
@@ -236,17 +239,18 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
       </div>
 
       {review && reviewInv?.response && reviewEv && (
-        <ConditionReviewDialog
-          evaluation={evaluation}
-          invite={reviewInv}
-          evaluator={reviewEv}
-          initial={review.decision}
-          onClose={() => setReview(null)}
-          onDone={() => {
-            reload();
-            reloadShell();
-          }}
-        />
+        <Modal size="sm" title={`조건부 참석 — ${reviewEv.name}`} onClose={() => setReview(null)}>
+          <ConditionAnswer
+            evaluation={evaluation}
+            invite={reviewInv}
+            evaluator={reviewEv}
+            onDone={() => {
+              setReview(null);
+              reload();
+              reloadShell();
+            }}
+          />
+        </Modal>
       )}
     </div>
   );

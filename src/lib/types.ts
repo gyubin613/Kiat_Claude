@@ -181,7 +181,7 @@ export const DISPLAY_STATE_LABEL: Record<InviteDisplayState, string> = {
   not_sent: "미발송",
   waiting: "회신 대기",
   yes: "참석 가능",
-  conditional: "조건부 · 검토 필요",
+  conditional: "조건부 · 답변 필요",
   cond_accepted: "조건부 · 수락",
   cond_rejected: "조건부 · 거절",
   no: "참석 불가",
@@ -201,7 +201,7 @@ export type MailResult = { status: "sent" | "failed" | "skipped"; detail?: strin
 export type Message = {
   id: string;
   from: "evaluator" | "admin";
-  kind?: "question"; // 관리자의 확인 요청 (위원 답변 필요)
+  kind?: "question" | "condition"; // question: 관리자 확인 요청 / condition: 위원의 조건부 참석 문의
   body: string;
   at: string;
   email?: MailResult; // 관리자 답변의 메일 발송 결과

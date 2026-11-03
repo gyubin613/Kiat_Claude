@@ -4,13 +4,13 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
-import { api, ApiError, copyText, download, errMsg, useConfirm, useToast } from "@/components/ui";
+import { api, ApiError, copyText, download, errMsg, Modal, useConfirm, useToast } from "@/components/ui";
 import { rankEvaluators } from "@/lib/scoring";
 import { inviteCounts, slotSummary } from "@/lib/summary";
 import { ATTENDANCE_LABEL, weightsOf } from "@/lib/types";
 import { formatDateTime, formatSlot } from "@/lib/util";
 import { bachelorText, conflictHits, finalText } from "@/lib/profile";
-import { ConditionReviewDialog } from "@/components/ConditionReview";
+import { ConditionAnswer } from "@/components/ConditionReview";
 
 function Result({ evaluation }: { evaluation: EvalWithCounts }) {
   const { byId } = useEvalData(evaluation.id);
@@ -168,7 +168,7 @@ function Finalize({ evaluation }: { evaluation: EvalWithCounts }) {
                 <span className="small muted">{s.slot.place}</span>
                 <span className="row small" style={{ gap: 6 }}>
                   <span className="badge ok">가능 {s.confirmable}</span>
-                  {s.conditional.length > 0 && <span className="badge warn">검토 필요 {s.conditional.length}</span>}
+                  {s.conditional.length > 0 && <span className="badge warn">답변 필요 {s.conditional.length}</span>}
                   {best?.slot.id === s.slot.id && s.total > 0 && <span className="badge dark">최다 가능</span>}
                   {!s.meetsSeatsWithConditional && <span className="badge bad">{evaluation.seats - s.total}명 부족</span>}
                 </span>
@@ -220,7 +220,7 @@ function Finalize({ evaluation }: { evaluation: EvalWithCounts }) {
                           {c.kind === "yes" && <span className="badge ok">참석 가능</span>}
                           {c.kind === "accepted" && <span className="badge ok">조건부 · 수락</span>}
                           {c.kind === "pending" && (
-                            <button className="btn sm" onClick={(e) => { e.stopPropagation(); setReview(c.id); }}>조건 검토 필요</button>
+                            <button className="btn sm" onClick={(e) => { e.stopPropagation(); setReview(c.id); }}>답변·검토 필요</button>
                           )}
                         </td>
                         <td className="num">{rankMap.get(c.id)?.rank ?? "-"}</td>
@@ -242,17 +242,18 @@ function Finalize({ evaluation }: { evaluation: EvalWithCounts }) {
         const inv = invites.find((i) => i.evaluatorId === review);
         const v = byId.get(review);
         return inv?.response && v ? (
-          <ConditionReviewDialog
-            evaluation={evaluation}
-            invite={inv}
-            evaluator={v}
-            initial="accepted"
-            onClose={() => setReview(null)}
-            onDone={() => {
-              reload();
-              reloadShell();
-            }}
-          />
+          <Modal size="sm" title={`조건부 참석 — ${v.name}`} onClose={() => setReview(null)}>
+            <ConditionAnswer
+              evaluation={evaluation}
+              invite={inv}
+              evaluator={v}
+              onDone={() => {
+                setReview(null);
+                reload();
+                reloadShell();
+              }}
+            />
+          </Modal>
         ) : null;
       })()}
     </div>

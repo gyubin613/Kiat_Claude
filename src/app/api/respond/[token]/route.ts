@@ -1,6 +1,6 @@
-import { body, handle, json } from "@/lib/api";
+import { baseUrl, body, handle, json } from "@/lib/api";
 import { resolveToken, submitResponse } from "@/lib/repo";
-import { getThread, listAnnouncements, markReadByEvaluator } from "@/lib/comm";
+import { getThread, listAnnouncements, markReadByEvaluator, postConditionMessage } from "@/lib/comm";
 import { pendingQuestion } from "@/lib/types";
 import { responseInput } from "@/lib/validate";
 
@@ -48,6 +48,12 @@ export const GET = handle(async (_req: Request, { params }: Ctx) => {
 export const POST = handle(async (req: Request, { params }: Ctx) => {
   const { token } = await params;
   const input = await body(req, responseInput);
-  await submitResponse(token, input);
+  const before = (await resolveToken(token)).invite.response;
+  const inv = await submitResponse(token, input);
+  // 조건부 회신의 조건·문의사항이 새로 생기거나 바뀌면 문의함에 등록 → 관리자가 바로 답변
+  const r = inv.response;
+  if (r?.attendance === "conditional" && (before?.attendance !== "conditional" || before.note !== r.note)) {
+    await postConditionMessage(inv.evaluationId, inv.evaluatorId, r.note, baseUrl(req));
+  }
   return json(await view(token));
 });

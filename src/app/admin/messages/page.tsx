@@ -4,6 +4,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
+import { ConditionAnswer } from "@/components/ConditionReview";
 import { api, errMsg, useConfirm, useToast } from "@/components/ui";
 import { announcementMail, mailtoUrl, replyMail } from "@/lib/email";
 import { audienceOfClient } from "@/lib/summary";
@@ -37,7 +38,7 @@ function Conversation({
 }) {
   const toast = useToast();
   const { meta } = useAdmin();
-  const { invites, byId } = useEvalData(evaluation.id);
+  const { invites, byId, reload: reloadData } = useEvalData(evaluation.id);
   const [thread, setThread] = useState<Thread | null>(null);
   const [text, setText] = useState("");
   const [sendEmail, setSendEmail] = useState(true);
@@ -109,6 +110,7 @@ function Conversation({
           <div key={m.id} className={`bubble ${m.from}`}>
             <div className="bubble-meta">
               {m.from === "admin" ? (m.kind === "question" ? "담당자 확인 요청" : "담당자") : v.name} · {formatDateTime(m.at)}
+              {m.kind === "condition" && <span className="badge warn">조건부 참석 문의</span>}
               {m.kind === "question" && (pendingQuestion(thread)?.id === m.id ? <span className="badge warn">답변 대기</span> : <span className="badge ok">답변 받음</span>)}
               {m.email && m.from === "admin" && (
                 <span className={`badge ${MAIL_BADGE[m.email.status][1]}`} title={m.email.detail}>{MAIL_BADGE[m.email.status][0]}</span>
@@ -119,6 +121,21 @@ function Conversation({
         ))}
         <div ref={endRef} />
       </div>
+      {inv && inv.response?.attendance === "conditional" && !inv.conditionReview && evaluation.status !== "finalized" && (
+        <div className="decision-bar">
+          <b>조건부 참석 문의에 답변하고 수락 여부를 정해 주세요</b>
+          <ConditionAnswer
+            compact
+            evaluation={evaluation}
+            invite={inv}
+            evaluator={v}
+            onDone={() => {
+              reloadData();
+              load();
+            }}
+          />
+        </div>
+      )}
       <div className="stack" style={{ gap: 8 }}>
         <div className="seg" role="radiogroup" aria-label="보낼 내용 종류">
           <button className={mode === "reply" ? "on" : ""} onClick={() => setMode("reply")} role="radio" aria-checked={mode === "reply"}>답변·안내</button>
@@ -313,7 +330,9 @@ function Messages({ evaluation }: { evaluation: EvalWithCounts }) {
                   <div className="row between">
                     <b>{v?.name}</b>
                     {t?.unreadAdmin ? (
-                      <span className="badge bad">{t.messages.some((m) => m.kind === "question") && last?.from === "evaluator" ? "답변 도착" : "새 문의"} {t.unreadAdmin}</span>
+                      <span className="badge bad">
+                        {last?.kind === "condition" ? "조건부 문의" : t.messages.some((m) => m.kind === "question") && last?.from === "evaluator" ? "답변 도착" : "새 문의"} {t.unreadAdmin}
+                      </span>
                     ) : pendingQuestion(t) ? (
                       <span className="badge warn">답변 대기</span>
                     ) : unansweredInquiry(t) ? (

@@ -301,3 +301,13 @@ table.table { width: 100%; border-collapse: collapse; }
 .weights .w .row { justify-content: space-between; }
 .conflict { color: var(--bad); font-weight: 650; }
 @media (max-width: 960px) { .hero { grid-template-columns: 1fr; } .weights { grid-template-columns: 1fr; } .rail .nav-item::after { display: none; } }
+
+/* ---------- 조건부 참석 답변 ---------- */
+.cond-list { display: grid; }
+.cond-item { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 16px 20px; border-top: 1px solid var(--line); }
+.cond-item:first-child { border-top: 0; }
+.cond-item .who { align-content: start; gap: 2px; }
+.cond-answer { display: grid; gap: 8px; }
+.cond-q { background: var(--warn-soft); border-radius: 8px; padding: 10px 12px; }
+.decision-bar { display: grid; gap: 8px; padding: 12px; border: 1px solid #e8c98a; border-radius: 10px; background: #fffaf0; }
+@media (max-width: 960px) { .cond-item { grid-template-columns: 1fr; } }

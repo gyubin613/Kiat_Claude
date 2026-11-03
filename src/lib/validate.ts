@@ -182,7 +182,7 @@ export const responseInput = z
     path: ["slotIds"],
   })
   .refine((v) => v.attendance !== "conditional" || v.note.length > 0, {
-    message: "조건부 참석의 경우 조건(조정 요청 등)을 참고사항에 적어 주세요.",
+    message: "조건부 참석은 참석 조건이나 문의사항을 반드시 적어 주세요. 담당자가 확인 후 답변드립니다.",
     path: ["note"],
   });
 

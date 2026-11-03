@@ -188,17 +188,15 @@ const errors = [];
   await page.waitForSelector("text=(수정 1회)");
   step("관리자 화면 회신 반영");
 
-  // 조건부 참석 검토 (가상 데이터의 검토 전 조건부 회신)
-  await page.waitForSelector("text=조건부 참석 검토");
-  await page.locator(".card:has(h2:has-text('조건부 참석 검토')) button:has-text('수락')").first().click();
-  await page.fill("#cr-note", "오후 세션으로 배정하겠습니다.");
-  await page.click(".modal-foot button:has-text('수락')");
-  await page.waitForSelector("text=/조건부 참석을 수락했습니다/");
-  await page.waitForSelector(".modal >> text=메일 앱으로 안내 보내기");
-  await page.click(".modal-foot button:has-text('닫기')");
+  // 조건부 참석 문의 → 회신 현황에서 바로 답변하며 수락 (가상 데이터의 조건부 회신)
+  const condCard = page.locator(".card:has(h2:has-text('조건부 참석 문의'))");
+  await condCard.waitFor();
+  await condCard.locator("textarea").first().fill("오후 세션으로 모시겠습니다. 13시까지 와 주시면 됩니다.");
+  await shot("05b-condition-answer");
+  await condCard.locator("button:has-text('수락하고 답변')").first().click();
+  await page.waitForSelector("text=/수락하고 답변을 보냈습니다/");
   await page.waitForSelector("td .badge:has-text('조건부 · 수락')");
-  await shot("05b-condition-review");
-  step("조건부 참석 검토 → 수락 (확정 후보 반영)");
+  step("조건부 참석 문의에 바로 답변하며 수락 (확정 후보 반영)");
 
   // 위원 문의 답변 (메일 서비스 미설정 → 회신 화면 게시 + 메일 앱 열기 제공)
   await page.click("a.nav-item:has-text('위원 문의·안내')");

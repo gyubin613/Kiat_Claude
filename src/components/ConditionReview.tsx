@@ -3,49 +3,69 @@
 import { useState } from "react";
 import type { Evaluation, Evaluator, Invite, MailResult } from "@/lib/types";
 import { mailtoUrl, replyMail } from "@/lib/email";
-import { formatSlot } from "@/lib/util";
-import { api, errMsg, Modal, useToast } from "./ui";
+import { formatDateTime, formatSlot } from "@/lib/util";
+import { api, errMsg, useToast } from "./ui";
 
-/** 조건부 참석 회신을 수락·거절하는 대화상자 */
-export function ConditionReviewDialog({
+type Decision = "accepted" | "rejected" | null;
+
+const DEFAULT_REPLY: Record<"accepted" | "rejected", string> = {
+  accepted: "제시하신 조건을 확인하였습니다. 조건을 반영하여 참석 위원으로 모시겠습니다.",
+  rejected: "제시하신 조건은 이번 평가 운영상 반영이 어렵게 되었습니다. 양해 부탁드립니다.",
+};
+
+/**
+ * 조건부 참석 문의에 바로 답변하고 수락·거절까지 한 번에 처리하는 입력란.
+ * 회신 현황(검토 목록)과 위원 문의 화면에서 함께 쓴다.
+ */
+export function ConditionAnswer({
   evaluation,
   invite,
   evaluator,
-  initial,
-  onClose,
   onDone,
+  compact = false,
 }: {
   evaluation: Evaluation;
   invite: Invite;
   evaluator: Evaluator;
-  initial: "accepted" | "rejected";
-  onClose: () => void;
   onDone: () => void;
+  compact?: boolean;
 }) {
   const toast = useToast();
-  const [decision, setDecision] = useState<"accepted" | "rejected">(initial);
-  const [note, setNote] = useState("");
-  const [notify, setNotify] = useState(true);
-  const [busy, setBusy] = useState(false);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState<Decision | "reply" | false>(false);
   const [fallback, setFallback] = useState<string | null>(null);
-  const r = invite.response!;
+  const r = invite.response;
+  if (!r || r.attendance !== "conditional") return null;
+  const reviewed = invite.conditionReview;
 
-  async function submit() {
-    setBusy(true);
+  async function send(decision: Decision) {
+    const body = text.trim() || (decision ? DEFAULT_REPLY[decision] : "");
+    if (!body) return;
+    setBusy(decision ?? "reply");
+    setFallback(null);
     try {
-      const res = await api<{ email: MailResult | null; link: string | null }>(
-        `/api/admin/evaluations/${evaluation.id}/invites/${invite.evaluatorId}`,
-        { method: "POST", json: { type: "reviewCondition", decision, note, notify } },
-      );
-      toast(`${evaluator.name} 위원의 조건부 참석을 ${decision === "accepted" ? "수락" : "거절"}했습니다.`, "ok");
+      let email: MailResult | null = null;
+      let link: string | null = null;
+      if (decision) {
+        const res = await api<{ email: MailResult | null; link: string | null }>(
+          `/api/admin/evaluations/${evaluation.id}/invites/${invite.evaluatorId}`,
+          { method: "POST", json: { type: "reviewCondition", decision, note: body, notify: true, reply: body } },
+        );
+        email = res.email;
+        link = res.link;
+      } else {
+        const res = await api<{ email: MailResult; link: string }>(`/api/admin/evaluations/${evaluation.id}/messages/${invite.evaluatorId}`, {
+          method: "POST",
+          json: { body, sendEmail: true },
+        });
+        email = res.email;
+        link = res.link;
+      }
+      const what = decision === "accepted" ? "수락하고 답변을 보냈습니다" : decision === "rejected" ? "거절하고 답변을 보냈습니다" : "답변을 보냈습니다";
+      toast(`${evaluator.name} 위원: ${what}.`, "ok");
+      if (email && email.status !== "sent" && evaluator.email && link) setFallback(mailtoUrl(evaluator.email, replyMail(evaluation, evaluator, body, link)));
+      setText("");
       onDone();
-      if (notify && res.email && res.email.status !== "sent" && evaluator.email && res.link) {
-        const text =
-          decision === "accepted"
-            ? `제시하신 참석 조건을 확인하였습니다. 조건을 반영하여 참석 위원 후보로 검토하겠습니다.${note ? `\n\n${note}` : ""}`
-            : `제시하신 참석 조건은 이번 평가 운영상 반영이 어렵게 되었습니다. 양해 부탁드립니다.${note ? `\n\n${note}` : ""}`;
-        setFallback(mailtoUrl(evaluator.email, replyMail(evaluation, evaluator, text, res.link)));
-      } else onClose();
     } catch (e) {
       toast(errMsg(e), "bad");
     } finally {
@@ -53,56 +73,53 @@ export function ConditionReviewDialog({
     }
   }
 
+  const slots = r.slotIds
+    .map((id) => evaluation.slots.find((s) => s.id === id))
+    .filter(Boolean)
+    .map((s) => formatSlot(s!, false));
+
   return (
-    <Modal
-      size="sm"
-      title={`조건부 참석 검토 — ${evaluator.name}`}
-      onClose={onClose}
-      footer={
-        fallback ? (
-          <>
-            <a className="btn primary" href={fallback} onClick={onClose}>메일 앱으로 안내 보내기</a>
-            <button className="btn" onClick={onClose}>닫기</button>
-          </>
-        ) : (
-          <>
-            <button className="btn" onClick={onClose}>취소</button>
-            <button className={`btn ${decision === "accepted" ? "primary" : "danger"}`} disabled={busy} onClick={submit}>
-              {decision === "accepted" ? "수락" : "거절"}
-            </button>
-          </>
-        )
-      }
-    >
-      {fallback ? (
-        <div className="notice warn">결과를 위원의 회신 화면에 게시했습니다. 메일은 자동으로 발송되지 않아, 업무용 메일로 직접 보내 주세요.</div>
-      ) : (
-        <div className="stack" style={{ gap: 12 }}>
-          <div className="notice">
-            <div className="strong">위원이 제시한 조건</div>
-            <div style={{ whiteSpace: "pre-wrap" }}>{r.note || "(조건 미기재)"}</div>
-            <div className="small muted" style={{ marginTop: 6 }}>
-              가능 일정: {r.slotIds.map((id) => evaluation.slots.find((s) => s.id === id)).filter(Boolean).map((s) => formatSlot(s!, false)).join(", ")}
-            </div>
+    <div className="cond-answer">
+      {!compact && (
+        <div className="cond-q">
+          <div className="row between">
+            <span className="small muted">
+              {evaluator.name} 위원의 조건·문의사항 · {formatDateTime(r.updatedAt)}
+            </span>
+            {reviewed && (
+              <span className={`badge ${reviewed.decision === "accepted" ? "ok" : "bad"}`}>{reviewed.decision === "accepted" ? "수락함" : "거절함"}</span>
+            )}
           </div>
-          <div className="seg" role="radiogroup" aria-label="검토 결과">
-            <button className={decision === "accepted" ? "on" : ""} onClick={() => setDecision("accepted")} role="radio" aria-checked={decision === "accepted"}>
-              수락 (확정 후보에 포함)
-            </button>
-            <button className={decision === "rejected" ? "on" : ""} onClick={() => setDecision("rejected")} role="radio" aria-checked={decision === "rejected"}>
-              거절
-            </button>
-          </div>
-          <div className="field">
-            <label htmlFor="cr-note">위원에게 덧붙일 말 (선택)</label>
-            <textarea id="cr-note" className="textarea" value={note} onChange={(e) => setNote(e.target.value)} placeholder={decision === "accepted" ? "예) 오후 세션으로 배정하겠습니다." : "예) 이번 평가는 종일 참석이 필요합니다."} />
-          </div>
-          <label className="row small">
-            <input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /> 결과를 위원에게 안내 (회신 화면 게시 + 메일)
-          </label>
-          {decision === "rejected" && <p className="small muted">거절하면 불참으로 집계되며, 자동 후속 안내의 &lsquo;불참 시 즉시 안내&rsquo;가 켜져 있으면 다음 순위 위원에게 안내합니다.</p>}
+          <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{r.note}</div>
+          <div className="small faint" style={{ marginTop: 4 }}>가능 일정: {slots.join(", ") || "-"}</div>
         </div>
       )}
-    </Modal>
+      <textarea
+        className="textarea"
+        style={{ minHeight: 70 }}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        maxLength={2000}
+        placeholder="위원에게 보낼 답변 (비워 두고 수락·거절을 누르면 기본 안내문을 보냅니다)"
+        aria-label={`${evaluator.name} 위원 조건부 답변`}
+      />
+      <div className="row">
+        <button className="btn sm primary" disabled={!!busy} onClick={() => send("accepted")}>
+          {busy === "accepted" ? "보내는 중…" : reviewed?.decision === "accepted" ? "수락 유지하고 답변" : "수락하고 답변"}
+        </button>
+        <button className="btn sm danger" disabled={!!busy} onClick={() => send("rejected")}>
+          {busy === "rejected" ? "보내는 중…" : reviewed?.decision === "rejected" ? "거절 유지하고 답변" : "거절하고 답변"}
+        </button>
+        <button className="btn sm" disabled={!!busy || !text.trim()} onClick={() => send(null)} title="수락·거절을 정하지 않고 답변만 보냅니다">
+          답변만 보내기
+        </button>
+      </div>
+      {fallback && (
+        <div className="notice warn row between small">
+          <span>위원 회신 화면에 게시했습니다. 메일은 자동 발송되지 않아 직접 보내 주세요.</span>
+          <a className="btn sm" href={fallback}>메일 앱으로 열기</a>
+        </div>
+      )}
+    </div>
   );
 }

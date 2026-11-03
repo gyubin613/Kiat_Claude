@@ -92,3 +92,48 @@ describe("관리자 확인 요청", () => {
     expect(await getThread(e.id, vs[2].id)).toBeNull(); // 회신 대기 위원은 대상 아님
   });
 });
+
+describe("조건부 참석 문의 → 관리자 바로 답변", () => {
+  beforeEach(() => __resetKvForTests());
+
+  const call = async (token: string, body: unknown) => {
+    const { POST } = await import("@/app/api/respond/[token]/route");
+    const res = await POST(new Request(`https://x/api/respond/${token}`, { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ token }) });
+    return { status: res.status, data: await res.json() };
+  };
+
+  it("조건부 회신은 조건·문의사항이 필수이고, 문의함에 한 번만 등록된다", async () => {
+    const { e, vs, tok, slot } = await setup();
+    expect((await call(tok(2), { attendance: "conditional", slotIds: [slot], note: "" })).status).toBe(400);
+    await call(tok(2), { attendance: "conditional", slotIds: [slot], note: "오전만 가능한데 괜찮을까요?" });
+    let t = await getThread(e.id, vs[2].id);
+    expect(t?.messages.map((m) => [m.kind, m.body])).toEqual([["condition", "오전만 가능한데 괜찮을까요?"]]);
+    expect(t?.unreadAdmin).toBe(1);
+    // 같은 내용으로 다시 제출하면 중복 등록하지 않고, 내용이 바뀌면 새로 등록
+    await call(tok(2), { attendance: "conditional", slotIds: [slot], note: "오전만 가능한데 괜찮을까요?" });
+    await call(tok(2), { attendance: "conditional", slotIds: [slot], note: "오전 11시까지만 가능합니다." });
+    t = await getThread(e.id, vs[2].id);
+    expect(t?.messages.filter((m) => m.kind === "condition")).toHaveLength(2);
+  });
+
+  it("답변과 함께 수락하면 답변이 위원 대화에 게시되고 확정 후보가 된다", async () => {
+    const { e, vs, tok, slot } = await setup();
+    await call(tok(2), { attendance: "conditional", slotIds: [slot], note: "오전만 가능합니다." });
+    const { POST } = await import("@/app/api/admin/evaluations/[id]/invites/[evaluatorId]/route");
+    const res = await POST(
+      new Request("https://x", {
+        method: "POST",
+        body: JSON.stringify({ type: "reviewCondition", decision: "accepted", note: "오전 세션 배정", notify: true, reply: "오전 세션으로 모시겠습니다." }),
+      }),
+      { params: Promise.resolve({ id: e.id, evaluatorId: vs[2].id }) },
+    );
+    expect(res.status).toBe(200);
+    const t = await getThread(e.id, vs[2].id);
+    expect(t?.messages.at(-1)).toMatchObject({ from: "admin", body: "오전 세션으로 모시겠습니다." });
+    expect(t?.unreadAdmin).toBe(0);
+    const inv = (await listInvites(e.id)).find((i) => i.evaluatorId === vs[2].id)!;
+    expect(inviteDisplayState(inv)).toBe("cond_accepted");
+    const view = (await (await import("@/app/api/respond/[token]/route")).GET(new Request("https://x"), { params: Promise.resolve({ token: tok(2) }) })).json();
+    expect((await view).conditionDecision).toBe("accepted");
+  });
+});

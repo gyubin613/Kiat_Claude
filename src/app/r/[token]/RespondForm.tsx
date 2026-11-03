@@ -10,7 +10,7 @@ type View = {
   evaluator: { name: string; org: string };
   invite: { status: "pending" | "sent" | "withdrawn"; response: InviteResponse | null };
   result: { slot: Slot; selected: boolean } | null;
-  messages: { id: string; from: "evaluator" | "admin"; body: string; at: string; kind?: "question" }[];
+  messages: { id: string; from: "evaluator" | "admin"; body: string; at: string; kind?: "question" | "condition" }[];
   unread: number;
   pendingQuestionId: string | null;
   conditionDecision: "pending" | "accepted" | "rejected" | null;
@@ -99,7 +99,7 @@ function Inquiry({ token, view, onUpdate }: { token: string; view: View; onUpdat
             <div className="thread">
               {view.messages.map((m) => (
                 <div key={m.id} className={`bubble ${m.from}`}>
-                  <div className="bubble-meta">{m.from === "admin" ? `${m.kind === "question" ? "확인 요청 · " : ""}담당자${view.evaluation.contactName ? ` (${view.evaluation.contactName})` : ""}` : "위원님"} · {formatDateTime(m.at)}</div>
+                  <div className="bubble-meta">{m.from === "admin" ? `${m.kind === "question" ? "확인 요청 · " : ""}담당자${view.evaluation.contactName ? ` (${view.evaluation.contactName})` : ""}` : m.kind === "condition" ? "조건부 참석 문의 · 위원님" : "위원님"} · {formatDateTime(m.at)}</div>
                   <div className="bubble-body">{m.body}</div>
                 </div>
               ))}
@@ -124,7 +124,7 @@ function Inquiry({ token, view, onUpdate }: { token: string; view: View; onUpdat
 
 const OPTIONS: { value: Attendance; label: string; desc: string; cls: string }[] = [
   { value: "yes", label: "참석 가능", desc: "아래 후보 일정 중 가능한 일정을 선택합니다", cls: "" },
-  { value: "conditional", label: "조건부 참석 가능", desc: "시간 조정 등 조건이 있으면 참고사항에 적어 주세요", cls: "cond" },
+  { value: "conditional", label: "조건부 참석 가능", desc: "조건이나 문의사항을 적어 주시면 담당자가 확인 후 답변드립니다", cls: "cond" },
   { value: "no", label: "참석 불가", desc: "일정 선택 없이 바로 제출할 수 있습니다", cls: "no" },
 ];
 
@@ -262,7 +262,14 @@ export default function RespondForm({ token }: { token: string }) {
           <a className="notice ok" href="#inquiry" style={{ display: "block" }}>담당자의 새 메시지가 {view.unread}건 있습니다. 아래 &lsquo;담당자와의 대화&rsquo;에서 확인해 주십시오.</a>
         )}
 
-        {justSaved && <div className="notice ok" role="status"><b>회신이 정상적으로 저장되었습니다.</b> 감사합니다. 일정 확정 전까지는 언제든 이 링크에서 수정하실 수 있습니다.</div>}
+        {justSaved && (
+          <div className="notice ok" role="status">
+            <b>회신이 정상적으로 저장되었습니다.</b>{" "}
+            {view.invite.response?.attendance === "conditional"
+              ? "적어 주신 조건·문의사항은 담당자에게 전달되었습니다. 답변은 아래 '담당자와의 대화'와 메일로 드립니다."
+              : "감사합니다. 일정 확정 전까지는 언제든 이 링크에서 수정하실 수 있습니다."}
+          </div>
+        )}
 
         {!editing && r && (
           <div className="card">
@@ -275,7 +282,7 @@ export default function RespondForm({ token }: { token: string }) {
             <div className="card-body stack" style={{ gap: 10 }}>
               <div>
                 <span className="muted">참석 여부</span> <b>{ATTENDANCE_LABEL[r.attendance]}</b>
-                {view.conditionDecision === "pending" && <span className="badge warn" style={{ marginLeft: 6 }}>담당자 검토 중</span>}
+                {view.conditionDecision === "pending" && <span className="badge warn" style={{ marginLeft: 6 }}>담당자 답변 대기</span>}
                 {view.conditionDecision === "accepted" && <span className="badge ok" style={{ marginLeft: 6 }}>조건 확인 완료</span>}
                 {view.conditionDecision === "rejected" && <span className="badge bad" style={{ marginLeft: 6 }}>조건 반영 어려움</span>}
               </div>
@@ -337,13 +344,16 @@ export default function RespondForm({ token }: { token: string }) {
 
             {attendance && (
               <div className="card"><div className="card-body">
-                <div className="step-title"><span className="n">{attendance === "no" ? 2 : 3}</span><h2>{attendance === "no" ? "불참 사유 (선택)" : attendance === "conditional" ? "참석 조건 (필수)" : "참고사항 (선택)"}</h2></div>
+                <div className="step-title"><span className="n">{attendance === "no" ? 2 : 3}</span><h2>{attendance === "no" ? "불참 사유 (선택)" : attendance === "conditional" ? "참석 조건 및 문의사항 (필수)" : "참고사항 (선택)"}</h2></div>
+                {attendance === "conditional" && (
+                  <p className="small muted" style={{ margin: "-4px 0 8px" }}>적어 주신 내용은 담당자에게 문의로 전달되며, 답변은 이 화면 아래 &lsquo;담당자와의 대화&rsquo;와 메일로 드립니다.</p>
+                )}
                 <textarea
                   className="textarea"
                   value={note}
                   maxLength={1000}
                   onChange={(ev) => { setNote(ev.target.value); setErr(""); }}
-                  placeholder={attendance === "no" ? "예) 해외 출장 일정과 겹칩니다." : attendance === "conditional" ? "예) 오후 2시 이후 참석 가능합니다." : "일정 조정 요청 등 전달하실 내용이 있으면 적어 주세요."}
+                  placeholder={attendance === "no" ? "예) 해외 출장 일정과 겹칩니다." : attendance === "conditional" ? "예) 오후 2시 이후에만 참석 가능한데 괜찮을까요?" : "일정 조정 요청 등 전달하실 내용이 있으면 적어 주세요."}
                   aria-label="참고사항"
                 />
               </div></div>
