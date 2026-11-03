@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import EvaluatorEditor from "@/components/EvaluatorEditor";
 import { useAdmin } from "@/components/AdminShell";
-import { api, download, Empty, errMsg, Modal, useConfirm, useToast } from "@/components/ui";
+import { api, download, Empty, errMsg, Modal, RowMenu, useConfirm, useToast } from "@/components/ui";
+import { bachelorText, educationMissing, finalText, overseasTags } from "@/lib/profile";
 import type { Evaluator } from "@/lib/types";
 
 type PreviewRow = {
@@ -91,7 +92,7 @@ function ImportDialog({ onClose, onDone }: { onClose: () => void; onDone: () => 
         {!results && (
           <>
             <div className="notice">
-              1행에 머리글(성명, 소속기관, 이메일, 연락처, 전문분야, 과거 초청 횟수, 과거 참여 횟수, 관리자 선호도, 비고)이 있는 .xlsx 파일을 올려 주세요.
+              1행에 머리글이 있는 .xlsx 파일을 올려 주세요. 기본정보 외에 학사·최종학력, 해외 여부(Y/N), 해외 근무 경력(년)도 읽습니다.
               <b> 성명</b>만 필수이며, 비어 있는 항목은 등록 후 보완할 수 있습니다.{" "}
               <button className="btn sm" onClick={() => download("/api/admin/evaluators/template")}>등록 양식 내려받기</button>
             </div>
@@ -188,13 +189,13 @@ export default function EvaluatorsPage() {
     load().catch((e) => toast(errMsg(e), "bad"));
   }, [load, toast]);
 
-  const incomplete = (v: Evaluator) => !v.email || !v.org || !v.phone;
+  const incomplete = (v: Evaluator) => !v.email || !v.org || !v.phone || educationMissing(v);
   const filtered = useMemo(() => {
     const k = q.trim().toLowerCase();
     return (list ?? []).filter(
       (v) =>
         (!onlyIncomplete || incomplete(v)) &&
-        (!k || [v.name, v.org, v.email, v.expertise, v.note].some((s) => s.toLowerCase().includes(k))),
+        (!k || [v.name, v.org, v.email, v.expertise, v.note, v.bachelorSchool, v.finalSchool].some((s) => s.toLowerCase().includes(k))),
     );
   }, [list, q, onlyIncomplete]);
 
@@ -214,8 +215,8 @@ export default function EvaluatorsPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>② 평가위원 명단</h1>
-          <p>엑셀로 일괄 등록하고, 필요한 항목만 골라 수정합니다. 이메일 또는 성명+소속기관이 같으면 중복으로 안내합니다.</p>
+          <h1>평가위원 명단</h1>
+          <p>엑셀로 한꺼번에 등록하고, 바뀐 항목만 골라 수정합니다.</p>
         </div>
         <div className="row">
           <button className="btn" onClick={() => download("/api/admin/evaluators/export")} disabled={!list?.length}>엑셀 내보내기</button>
@@ -227,7 +228,7 @@ export default function EvaluatorsPage() {
       <div className="card">
         <div className="card-head">
           <div className="row" style={{ flex: 1 }}>
-            <input className="input" style={{ maxWidth: 320 }} placeholder="성명·소속·이메일·전문분야 검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="평가위원 검색" />
+            <input className="input" style={{ maxWidth: 320 }} placeholder="성명·소속·학교·전문분야 검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="평가위원 검색" />
             <label className="row small">
               <input type="checkbox" checked={onlyIncomplete} onChange={(e) => setOnlyIncomplete(e.target.checked)} /> 정보 보완 필요만 보기
             </label>
@@ -246,25 +247,37 @@ export default function EvaluatorsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>성명</th><th>소속기관</th><th>이메일</th><th>연락처</th><th>전문분야</th>
-                  <th className="num">초청</th><th className="num">참여</th><th className="num">선호도</th><th>비고</th><th></th>
+                  <th>위원</th><th>연락처</th><th>학사</th><th>최종학력</th><th>해외경험</th>
+                  <th className="num">초청/참여</th><th className="num">선호도</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((v) => (
                   <tr key={v.id}>
-                    <td className="strong nowrap">{v.name}</td>
-                    <td>{v.org || <span className="badge warn">미입력</span>}</td>
-                    <td className="small">{v.email || <span className="badge warn">미입력</span>}</td>
-                    <td className="small nowrap">{v.phone || <span className="faint">-</span>}</td>
-                    <td className="small">{v.expertise}</td>
-                    <td className="num">{v.pastInvited ?? <span className="faint">-</span>}</td>
-                    <td className="num">{v.pastAttended ?? <span className="faint">-</span>}</td>
+                    <td>
+                      <div className="who">
+                        <b>{v.name}</b>
+                        <span>{v.org || <span className="badge warn">소속 미입력</span>}</span>
+                        {v.expertise && <span className="faint">{v.expertise}</span>}
+                      </div>
+                    </td>
+                    <td className="small">
+                      <div>{v.email || <span className="badge warn">이메일 미입력</span>}</div>
+                      <div className="muted">{v.phone}</div>
+                    </td>
+                    <td className="small">{bachelorText(v) || <span className="faint">미입력</span>}</td>
+                    <td className="small">{finalText(v) || (v.bachelorSchool ? <span className="faint">학사와 동일</span> : <span className="faint">미입력</span>)}</td>
+                    <td>
+                      <div className="tags">
+                        {overseasTags(v).map((t) => <span key={t} className="badge info">{t}</span>)}
+                        {!overseasTags(v).length && <span className="faint small">{v.overseasWorkYears == null && v.bachelorAbroad == null && v.finalAbroad == null ? "미입력" : "없음"}</span>}
+                      </div>
+                    </td>
+                    <td className="num">{v.pastInvited == null ? <span className="faint">-</span> : `${v.pastInvited}/${v.pastAttended ?? 0}`}</td>
                     <td className="num">{v.preference ?? <span className="faint">-</span>}</td>
-                    <td className="small muted">{v.note}</td>
-                    <td className="nowrap">
+                    <td className="nowrap" style={{ textAlign: "right" }}>
                       <button className="btn sm" onClick={() => setEditing(v)}>수정</button>{" "}
-                      <button className="btn sm ghost" onClick={() => remove(v)} aria-label={`${v.name} 삭제`}>✕</button>
+                      <RowMenu items={[{ label: "삭제", danger: true, onClick: () => remove(v) }]} />
                     </td>
                   </tr>
                 ))}

@@ -18,5 +18,8 @@
 - 확정(`status: "finalized"`) 이후 평가·초청·회신 변경은 서버에서 423으로 차단 — UI만 막지 말 것
 - 문서 갱신은 `repo.ts`의 `updateWithVersion`(클라이언트 버전 기준) / `updateWithRetry`(서버 내부)를 통해서만
 - 부분 수정 스키마(`*Patch`)에는 `.default()`를 쓰지 않는다 (zod v4는 partial 안에서도 기본값을 채워 기존 값을 덮어씀)
+- `useEffect`는 항상 블록 본문 `useEffect(() => { ... })`으로 작성 (최신 Chrome의 `scrollIntoView` 등은 Promise를 반환해 React 정리 함수 오류 발생)
+- 조건부 참석은 관리자가 '수락'한 경우에만 확정 후보 — 집계·확정·후속 안내 모두 `summary.ts`의 `isConfirmable`/`isConditionPending`/`isDeclined`를 사용
+- 학력은 이해관계 확인용 표시이며 가중치에는 해외 대학 여부만 반영
 - 우선순위 점수는 "참고자료" — 예측·보증 표현 금지
 - 비밀값은 환경변수로만. 실제 개인정보·내부자료를 테스트 데이터나 이슈에 넣지 않는다

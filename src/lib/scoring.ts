@@ -1,22 +1,30 @@
-import type { Evaluator } from "./types";
+import type { Evaluator, Weights } from "./types";
 
 /**
  * 섭외 우선순위 참고 점수
  *
- * - 과거 이력 점수: (참여 + 1) / (초청 + 2)  ← 라플라스 보정.
- *   이력이 없으면 0.5(중립)이며, 초청 1회·참여 1회처럼 표본이 적은 경우 극단값을 완화한다.
- * - 관리자 선호도 점수: (선호도 - 1) / 4, 미입력 시 3점(중립 = 0.5)
- * - 종합 점수 = 100 × (이력가중치 × 이력점수 + (100 - 이력가중치) × 선호도점수) / 100
+ * - 과거 이력: (참여 + 1) / (초청 + 2)  ← 라플라스 보정. 이력이 없으면 0.5(중립)
+ * - 관리자 선호도: (선호도 - 1) / 4, 미입력 시 3점(중립 = 0.5)
+ * - 해외경험: 해외 대학(학사 또는 최종학력) 50% + 해외 근무 경력 50% (3년 이상이면 만점)
+ *   해외 관련 항목이 모두 미입력이면 중립 0.5, 일부만 입력되면 미입력 항목은 '없음'으로 계산
+ * - 종합 점수 = 100 × Σ(가중치 × 점수) / Σ가중치
  *
  * ※ 이 점수는 섭외 순서 검토용 참고자료이며, 실제 참석 가능성을 예측·보증하지 않는다.
  */
 export type ScoreBreakdown = {
   history: number; // 0~1
   historyIsNeutral: boolean;
-  preference: number; // 0~1
+  preference: number;
   preferenceIsNeutral: boolean;
+  overseas: number;
+  overseasIsNeutral: boolean;
   total: number; // 0~100 (소수점 1자리)
 };
+
+export const OVERSEAS_FULL_YEARS = 3;
+
+type ScoreInput = Pick<Evaluator, "pastInvited" | "pastAttended" | "preference"> &
+  Partial<Pick<Evaluator, "bachelorAbroad" | "finalAbroad" | "overseasWorkYears">>;
 
 export function historyScore(ev: Pick<Evaluator, "pastInvited" | "pastAttended">) {
   const invited = ev.pastInvited ?? 0;
@@ -31,19 +39,39 @@ export function preferenceScore(ev: Pick<Evaluator, "preference">) {
   return { value: (p - 1) / 4, neutral: false };
 }
 
-export function scoreEvaluator(
-  ev: Pick<Evaluator, "pastInvited" | "pastAttended" | "preference">,
-  historyWeight: number,
-): ScoreBreakdown {
-  const w = Math.max(0, Math.min(100, historyWeight)) / 100;
+export function overseasScore(ev: Partial<Pick<Evaluator, "bachelorAbroad" | "finalAbroad" | "overseasWorkYears">>) {
+  const b = ev.bachelorAbroad ?? null;
+  const f = ev.finalAbroad ?? null;
+  const y = ev.overseasWorkYears ?? null;
+  if (b === null && f === null && y === null) return { value: 0.5, neutral: true };
+  const univ = b === true || f === true ? 1 : 0;
+  const work = y && y > 0 ? Math.min(y, OVERSEAS_FULL_YEARS) / OVERSEAS_FULL_YEARS : 0;
+  return { value: 0.5 * univ + 0.5 * work, neutral: false };
+}
+
+export function normalizeWeights(w: Weights) {
+  const h = Math.max(0, w.history), p = Math.max(0, w.preference), o = Math.max(0, w.overseas);
+  const sum = h + p + o;
+  if (sum <= 0) return { history: 1 / 3, preference: 1 / 3, overseas: 1 / 3 };
+  return { history: h / sum, preference: p / sum, overseas: o / sum };
+}
+
+/** weights 에 숫자만 넘기면 (이전 방식) 과거 이력 가중치로 해석 */
+export function scoreEvaluator(ev: ScoreInput, weights: Weights | number): ScoreBreakdown {
+  const w = normalizeWeights(
+    typeof weights === "number" ? { history: weights, preference: 100 - weights, overseas: 0 } : weights,
+  );
   const h = historyScore(ev);
   const p = preferenceScore(ev);
-  const total = Math.round((w * h.value + (1 - w) * p.value) * 1000) / 10;
+  const o = overseasScore(ev);
+  const total = Math.round((w.history * h.value + w.preference * p.value + w.overseas * o.value) * 1000) / 10;
   return {
     history: h.value,
     historyIsNeutral: h.neutral,
     preference: p.value,
     preferenceIsNeutral: p.neutral,
+    overseas: o.value,
+    overseasIsNeutral: o.neutral,
     total,
   };
 }
@@ -51,9 +79,9 @@ export function scoreEvaluator(
 export type Ranked<T> = T & { score: ScoreBreakdown; rank: number };
 
 /** 점수 내림차순, 동점이면 참여 횟수 → 성명 순으로 안정 정렬 */
-export function rankEvaluators<T extends Evaluator>(list: T[], historyWeight: number): Ranked<T>[] {
+export function rankEvaluators<T extends Evaluator>(list: T[], weights: Weights | number): Ranked<T>[] {
   return list
-    .map((ev) => ({ ...ev, score: scoreEvaluator(ev, historyWeight) }))
+    .map((ev) => ({ ...ev, score: scoreEvaluator(ev, weights) }))
     .sort(
       (a, b) =>
         b.score.total - a.score.total ||

@@ -40,9 +40,11 @@ const errors = [];
   await page.click("button:has-text('가상 데이터 불러오기') >> nth=0");
   await page.click(".modal button:has-text('불러오기')");
   await page.waitForSelector("text=가상 데이터를 불러왔습니다");
-  await page.waitForSelector("h2:has-text('지역혁신 클러스터 연차평가')");
+  await page.waitForSelector("td:has-text('지역혁신 클러스터 연차평가')");
   await page.waitForTimeout(500);
   await shot("01-evaluations"); step("가상 데이터 불러오기");
+  await page.waitForSelector("text=무응답 자동 후속 안내:");
+  step("48시간 무응답 위원 → 다음 순위 자동 초청 (가상 데이터 불러온 직후 점검)");
 
   // 현재 평가 전환 후 새로고침해도 유지
   const sel = page.locator("select[aria-label='현재 작업 중인 평가']");
@@ -62,10 +64,24 @@ const errors = [];
   await page.waitForTimeout(400);
   await shot("05-responses");
 
+  // 평가별 자동 후속 안내 기간 설정
+  await page.click("a.nav-item:has-text('평가 등록')");
+  await page.waitForSelector("text=할 일");
+  await shot("00-home-today");
+  const row = page.locator("tr:has-text('소재부품')");
+  await row.locator("summary[aria-label='더보기']").click();
+  await row.locator(".menu-pop button:has-text('수정')").click();
+  await page.click(".modal button:has-text('3일(72시간)')");
+  await page.click(".modal button:has-text('저장')");
+  await page.waitForSelector("tr:has-text('소재부품') >> text=72시간");
+  step("평가별 자동 후속 안내 기간 설정 (72시간)");
+
   // 평가위원 개별 수정 (변경 항목만)
   await page.click("a.nav-item:has-text('평가위원 명단')");
   await page.waitForSelector("table.table tbody tr");
+  await page.waitForSelector("th:has-text('최종학력')");
   await page.locator("table.table tbody tr").first().locator("button:has-text('수정')").click();
+  await page.waitForSelector(".modal >> text=학력 (이해관계 확인용)");
   await page.fill("#f-phone", "010-7777-7777");
   await page.waitForSelector("text=변경된 항목 1개만 저장됩니다.");
   await shot("02-evaluator-edit");
@@ -90,24 +106,38 @@ const errors = [];
   step("엑셀 일괄 등록(미리보기·중복·오류 처리)");
 
   // 우선순위
-  await page.click("a.nav-item:has-text('섭외 우선순위')");
+  await page.click("a.nav-item:has-text('우선순위·섭외')");
   await page.waitForSelector("text=참고 점수");
   await page.waitForSelector("table.table tbody tr");
+  await page.waitForSelector("text=해외경험");
+  await page.waitForSelector("text=/이해관계 확인 필요/");
   await page.waitForTimeout(300);
   await shot("04-priority");
-  const shortageTxt = await page.locator(".stat:has-text('추가 필요') .value").innerText();
-  console.log("  추가 필요 인원:", shortageTxt);
-  const autoBtn = page.locator("button:has-text('후순위')").first();
-  if (await autoBtn.count()) await autoBtn.click(); else await page.click("button:has-text('자동 선택'), button:has-text('다음 순위')");
+  const top0 = await page.locator("tbody tr").first().innerText();
+  await page.locator("input[aria-label='해외경험 가중치']").fill("100");
+  await page.locator("input[aria-label='과거 이력 가중치']").fill("0");
+  await page.locator("input[aria-label='관리자 선호도 가중치']").fill("0");
+  await page.waitForTimeout(200);
+  const top1 = await page.locator("tbody tr").first().innerText();
+  if (!/해외/.test(top1)) throw new Error("해외경험 가중치 100%인데 1순위가 해외경험 없음: " + top1.slice(0, 80));
+  if (top0 === top1) console.log("  (가중치 변경 전후 1순위 동일)");
+  step("가중치에 해외경험 반영 · 학력 표시 · 이해관계 표시");
+  await page.locator("tbody tr input[type=checkbox]:not([disabled])").first().check();
   await page.click("button:has-text('초청 대상에 추가')");
   await page.waitForSelector("text=초청 대상에 추가했습니다");
   step("후순위 후보 추가 섭외");
 
   // 초청 메일
   await page.click("a.nav-item:has-text('초청 메일')");
-  await page.waitForSelector("text=2차");
-  await page.locator("tr:has-text('2차') button:has-text('메일 보기')").first().click();
+  await page.waitForSelector("text=자동 후속 안내 사용 중");
+  await page.waitForSelector("td .badge.dark:has-text('자동')");
+  await page.waitForSelector("text=무응답 → 다음 순위 안내됨");
+  await page.waitForSelector("text=/자동 후속까지 \\d+시간/");
+  await shot("06a-invites-followup");
+  step("초청 메일 화면: 자동 후속 상태·남은 시간 표시");
+  await page.locator("tbody tr:last-child button:has-text('메일')").click();
   await page.waitForSelector(".preview-mail");
+  const evName = (await page.locator(".modal-head h2").innerText()).replace("초청 메일 — ", "").split(" (")[0];
   await shot("06-invite-mail");
   const body = await page.locator(".modal .preview-mail").innerText();
   const link = body.match(/https?:\/\/\S+\/r\/[A-Za-z0-9_-]+/)[0];
@@ -127,6 +157,11 @@ const errors = [];
   await mp.goto(link);
   await mp.waitForSelector("text=참석 여부를 선택해 주세요");
   await mp.screenshot({ path: path.join(OUT, "07-respond-start.png"), fullPage: true });
+  await mp.click("button:has-text('문의하기')");
+  await mp.fill("textarea[aria-label='문의 내용']", "평가 당일 주차가 가능한지 문의드립니다.");
+  await mp.click("button:has-text('문의 보내기')");
+  await mp.waitForSelector("text=문의가 담당자에게 전달되었습니다");
+  step("평가위원: 회신 전 문의 남기기");
   await mp.click("button[role=radio]:has-text('참석 불가')");
   if (await mp.locator("text=참석 가능한 일정을 모두 선택").count()) throw new Error("불참인데 일정 선택이 표시됨");
   await mp.click("button[role=radio]:has-text('조건부 참석 가능')");
@@ -136,7 +171,7 @@ const errors = [];
   await mp.locator("button[role=checkbox]").nth(1).click();
   await mp.click("button:has-text('회신 제출')");
   await mp.waitForSelector("text=조건부 참석의 조건");
-  await mp.fill("textarea", "오후 1시 이후 가능합니다.");
+  await mp.fill("textarea[aria-label='참고사항']", "오후 1시 이후 가능합니다.");
   await mp.screenshot({ path: path.join(OUT, "07b-respond-filled.png"), fullPage: true });
   await mp.click("button:has-text('회신 제출')");
   await mp.waitForSelector("text=회신이 정상적으로 저장되었습니다");
@@ -153,7 +188,62 @@ const errors = [];
   await page.waitForSelector("text=(수정 1회)");
   step("관리자 화면 회신 반영");
 
+  // 조건부 참석 문의 → 회신 현황에서 바로 답변하며 수락 (가상 데이터의 조건부 회신)
+  const condCard = page.locator(".card:has(h2:has-text('조건부 참석 문의'))");
+  await condCard.waitFor();
+  await condCard.locator("textarea").first().fill("오후 세션으로 모시겠습니다. 13시까지 와 주시면 됩니다.");
+  await shot("05b-condition-answer");
+  await condCard.locator("button:has-text('수락하고 답변')").first().click();
+  await page.waitForSelector("text=/수락하고 답변을 보냈습니다/");
+  await page.waitForSelector("td .badge:has-text('조건부 · 수락')");
+  step("조건부 참석 문의에 바로 답변하며 수락 (확정 후보 반영)");
+
+  // 위원 문의 답변 (메일 서비스 미설정 → 회신 화면 게시 + 메일 앱 열기 제공)
+  await page.click("a.nav-item:has-text('위원 문의·안내')");
+  await page.locator(`button.msg-item:has-text('${evName}')`).click();
+  await page.waitForSelector("text=평가 당일 주차가 가능한지");
+  await page.fill("textarea[aria-label='답변 내용']", "본관 지하주차장을 이용하실 수 있습니다.");
+  await page.click("button:has-text('답변 보내기')");
+  await page.waitForSelector("text=메일이 자동 발송되지 않았습니다");
+  if (!(await page.locator("a[href^='mailto:']:has-text('메일 앱으로 열기')").count())) throw new Error("메일 앱 열기 대체 수단 없음");
+  await shot("08a-admin-reply");
+  step("관리자: 문의 답변 게시 (메일 미설정 시 메일 앱 열기 제공)");
+
+  // 관리자 확인 요청 → 위원 답변 → 관리자 확인
+  await page.click("button[role=radio]:has-text('확인 요청')");
+  await page.fill("textarea[aria-label='답변 내용']", "평가 당일 차량 번호를 알려 주실 수 있을까요?");
+  await page.click("button:has-text('확인 요청 보내기')");
+  await page.waitForSelector(".bubble .badge:has-text('답변 대기')");
+  await mp.reload();
+  await mp.waitForSelector("text=담당자 확인 요청");
+  await mp.fill("textarea[aria-label='확인 요청 답변']", "12가 3456입니다.");
+  await mp.click(".card:has-text('담당자 확인 요청') button:has-text('답변 보내기')");
+  await mp.waitForSelector(".bubble:has-text('12가 3456입니다.')");
+  await page.reload();
+  await page.locator(`button.msg-item:has-text('${evName}')`).click();
+  await page.waitForSelector(".bubble:has-text('12가 3456입니다.')");
+  await page.waitForSelector(".bubble .badge:has-text('답변 받음')");
+  step("관리자 확인 요청 → 위원 답변 → 관리자 화면에서 확인");
+
+  // 전체 안내
+  await page.click("button.tab:has-text('전체·대상별 안내')");
+  await page.fill("input[placeholder*='사전 검토자료']", "사전 검토자료 송부 안내");
+  await page.fill(".card:has-text('새 안내사항') textarea", "평가 3일 전까지 메일로 송부드리겠습니다.");
+  await page.click("button:has-text('명에게 보내기')");
+  await page.click(".modal button:has-text('보내기')");
+  await page.waitForSelector("text=명에게 게시했습니다");
+  await shot("08b-announcement");
+  step("관리자: 초청 위원 전체에 안내사항 게시");
+
+  await mp.reload();
+  await mp.waitForSelector("text=사전 검토자료 송부 안내");
+  await mp.waitForSelector("text=본관 지하주차장을 이용하실 수 있습니다.");
+  await mp.screenshot({ path: path.join(OUT, "08c-respond-messages.png"), fullPage: true });
+  step("평가위원 화면: 답변·안내사항 확인");
+
   // 엑셀 다운로드
+  await page.click("a.nav-item:has-text('회신 현황')");
+  await page.waitForSelector("text=후보 일정별 참석 가능 인원");
   const [dl] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('엑셀 다운로드')")]);
   await dl.saveAs(path.join(OUT, "responses.xlsx"));
   step("회신 결과 엑셀 다운로드: " + dl.suggestedFilename());
@@ -192,7 +282,8 @@ const errors = [];
   step("캘린더");
 
   await browser.close();
-  const real = errors.filter((e) => !e.includes("status of 401"));
+  // 의도된 로그인 실패(401)와 외부 웹폰트 네트워크 차단(샌드박스 환경)은 제외
+  const real = errors.filter((e) => !e.includes("status of 401") && !/net::ERR_/.test(e));
   console.log(real.length ? "\n오류:\n" + real.join("\n") : "\n콘솔 오류 없음 (의도된 로그인 실패 401 제외)");
   if (real.length) process.exit(1);
 })().catch(async (e) => { console.error("FAIL:", e.message); console.log(errors.join("\n")); process.exit(1); });

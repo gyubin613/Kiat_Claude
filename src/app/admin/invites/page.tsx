@@ -1,17 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
-import { api, copyText, errMsg, Modal, useConfirm, useToast } from "@/components/ui";
+import { api, copyText, errMsg, Modal, RowMenu, useConfirm, useToast } from "@/components/ui";
 import { DEFAULT_TEMPLATE, mailtoUrl, PLACEHOLDERS, renderTemplate } from "@/lib/email";
-import { DISPLAY_STATE_LABEL, inviteDisplayState, type Evaluator, type Invite, type InviteDisplayState } from "@/lib/types";
+import { STATE_CLASS, DISPLAY_STATE_LABEL, followupOf, inviteDisplayState, type Evaluator, type Invite } from "@/lib/types";
 import { formatDateTime } from "@/lib/util";
 
-const STATE_CLS: Record<InviteDisplayState, string> = {
-  not_sent: "", waiting: "info", yes: "ok", conditional: "warn", no: "bad", withdrawn: "bad",
-};
+const STATE_CLS = STATE_CLASS;
 
 function TemplateEditor({ evaluation, sample }: { evaluation: EvalWithCounts; sample: { evaluator: Pick<Evaluator, "name" | "org">; link: string } }) {
   const { reload } = useAdmin();
@@ -205,8 +203,63 @@ function InviteDialog({
   );
 }
 
+function timeLeft(inv: Invite, hours: number, now: number) {
+  if (inv.status !== "sent" || inv.response || !inv.sentAt) return null;
+  const ms = new Date(inv.sentAt).getTime() + hours * 3600 * 1000 - now;
+  if (ms <= 0) return { overdue: true, label: "회신 기한 경과" };
+  const h = Math.floor(ms / 3600000);
+  return { overdue: false, label: h >= 1 ? `자동 후속까지 ${h}시간` : `자동 후속까지 ${Math.max(1, Math.round(ms / 60000))}분` };
+}
+
+function FollowupBanner({ evaluation, onRan }: { evaluation: EvalWithCounts; onRan: () => void }) {
+  const { meta } = useAdmin();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const f = followupOf(evaluation);
+  if (evaluation.status === "finalized") return null;
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await api<{ results: { invited: { name: string; sent: boolean; detail?: string }[]; note?: string }[] }>("/api/admin/followup", {
+        method: "POST",
+        json: { evaluationId: evaluation.id },
+      });
+      const res = r.results[0];
+      if (!res) toast("지금 처리할 무응답·불참 위원이 없습니다.", "info");
+      else if (res.invited.length) toast(`다음 순위 ${res.invited.length}명 안내: ${res.invited.map((i) => `${i.name}${i.sent ? "(메일 발송)" : "(발송 필요)"}`).join(", ")}`, "ok");
+      else toast(res.note ?? "처리했습니다.", "info");
+      onRan();
+    } catch (e) {
+      toast(errMsg(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className={`notice ${f.enabled ? "" : "warn"} row between`}>
+      <span>
+        {f.enabled ? (
+          <>
+            <b>자동 후속 안내 사용 중</b> — 발송 후 <b>{f.hours}시간</b> 안에 회신이 없으면{f.onDecline ? " (또는 참석 불가 회신 시)" : ""} 다음 순위 위원을 자동 초청
+            {f.autoSend ? (meta?.email.configured ? "하고 메일을 발송합니다." : "합니다. (발송 서비스 미설정 → 초청 대상만 추가, 발송은 수동)") : "합니다. (메일은 수동 발송)"}
+          </>
+        ) : (
+          <>자동 후속 안내가 꺼져 있습니다. 평가 등록 화면의 평가 수정에서 평가별로 설정할 수 있습니다.</>
+        )}
+      </span>
+      {f.enabled && <button className="btn sm" disabled={busy} onClick={run}>{busy ? "점검 중…" : "지금 점검"}</button>}
+    </div>
+  );
+}
+
 function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
   const { reload: reloadShell } = useAdmin();
+  const fu = followupOf(evaluation);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
   const toast = useToast();
   const confirm = useConfirm();
   const { invites, byId, reload, ready } = useEvalData(evaluation.id);
@@ -266,14 +319,16 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>④ 초청 메일 관리</h1>
-          <p>위원별 고유 회신 링크가 담긴 초청 메일을 확인·발송하고, 발송 이력과 처리 상태를 관리합니다.</p>
+          <h1>초청 메일</h1>
+          <p>위원마다 개인 회신 링크가 담긴 메일을 보내고, 발송 상태를 확인합니다.</p>
         </div>
         <div className="row">
           <button className="btn" onClick={() => setShowTpl((s) => !s)}>{showTpl ? "메일 양식 닫기" : "메일 양식 편집"}</button>
-          <Link className="btn" href={`/admin/responses?e=${evaluation.id}`}>⑤ 회신 현황으로 →</Link>
+          <Link className="btn" href={`/admin/responses?e=${evaluation.id}`}>회신 현황 보기</Link>
         </div>
       </div>
+
+      <FollowupBanner evaluation={evaluation} onRan={refresh} />
 
       {showTpl && (
         <div className="card">
@@ -294,7 +349,7 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
           <div className="empty">불러오는 중…</div>
         ) : !invites?.length ? (
           <div className="empty">
-            아직 초청 대상이 없습니다. <Link href={`/admin/priority?e=${evaluation.id}`}>③ 섭외 우선순위</Link>에서 대상을 선정하세요.
+            아직 초청 대상이 없습니다. <Link href={`/admin/priority?e=${evaluation.id}`}>우선순위·섭외</Link>에서 대상을 선정하세요.
           </div>
         ) : (
           <div className="table-wrap">
@@ -309,7 +364,7 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
                       onChange={(e) => setChecked(e.target.checked ? new Set(invites.map((i) => i.evaluatorId)) : new Set())}
                     />
                   </th>
-                  <th>차수</th><th>성명</th><th>소속기관</th><th>이메일</th><th>상태</th><th>발송</th><th>최근 처리</th><th></th>
+                  <th>위원</th><th>상태</th><th>발송</th><th>최근 처리</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -333,20 +388,40 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
                           }
                         />
                       </td>
-                      <td>{inv.round}차</td>
-                      <td className="strong nowrap">{v?.name ?? "(삭제됨)"}</td>
-                      <td>{v?.org}</td>
-                      <td className="small">{v?.email || <span className="badge bad">미등록</span>}</td>
-                      <td><span className={`badge ${STATE_CLS[st]}`}>{DISPLAY_STATE_LABEL[st]}</span></td>
+                      <td>
+                        <div className="who">
+                          <b>{v?.name ?? "(삭제됨)"} <span className="faint small" style={{ fontWeight: 400 }}>{inv.round}차</span></b>
+                          <span>{v?.org}</span>
+                          <span>{v?.email || <span className="badge bad">이메일 미등록</span>}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${STATE_CLS[st]}`}>{DISPLAY_STATE_LABEL[st]}</span>
+                        {inv.autoInvited && <span className="badge dark" style={{ marginLeft: 4 }} title="무응답·불참에 따른 자동 후속 안내로 추가">자동</span>}
+                        {(() => {
+                          if (inv.escalatedAt && !inv.response) return <div className="small" style={{ color: "var(--bad)" }}>무응답 → 다음 순위 안내됨</div>;
+                          if (inv.escalatedAt && inv.response) return <div className="small faint">다음 순위 안내됨</div>;
+                          const tl = fu.enabled && evaluation.status !== "finalized" ? timeLeft(inv, fu.hours, now) : null;
+                          return tl ? <div className="small" style={{ color: tl.overdue ? "var(--bad)" : "var(--muted)" }}>{tl.label}</div> : null;
+                        })()}
+                      </td>
                       <td className="small nowrap">{inv.sentAt ? `${formatDateTime(inv.sentAt)}${inv.sentVia === "email" ? " (자동)" : ""}` : "-"}</td>
                       <td className="small muted">{inv.log[0]?.action}</td>
-                      <td className="nowrap">
-                        <button className="btn sm primary" onClick={() => setOpen(inv.evaluatorId)} disabled={!v}>메일 보기</button>{" "}
-                        {!locked && inv.status === "pending" && <button className="btn sm" onClick={() => action(inv, { type: "markSent" }, "발송 완료로 표시했습니다.")}>발송 완료</button>}{" "}
-                        {!locked && inv.status === "sent" && !inv.response && <button className="btn sm ghost" onClick={() => action(inv, { type: "unmarkSent" }, "발송 표시를 취소했습니다.")}>발송 취소</button>}{" "}
-                        {!locked && inv.status !== "withdrawn" && <button className="btn sm danger" onClick={() => withdraw(inv)}>철회</button>}
-                        {!locked && inv.status === "withdrawn" && <button className="btn sm" onClick={() => action(inv, { type: "reinvite" }, "다시 초청 상태로 되돌렸습니다.")}>재초청</button>}{" "}
-                        {!locked && inv.status === "pending" && <button className="btn sm ghost" title="목록에서 제외" onClick={() => action(inv, { type: "remove" }, "초청 대상에서 제외했습니다.")}>✕</button>}
+                      <td className="nowrap" style={{ textAlign: "right" }}>
+                        <button className={`btn sm ${inv.status === "pending" ? "primary" : ""}`} onClick={() => setOpen(inv.evaluatorId)} disabled={!v}>
+                          {inv.status === "pending" ? "메일 보내기" : "메일 보기"}
+                        </button>{" "}
+                        {!locked && (
+                          <RowMenu
+                            items={[
+                              { label: "발송 완료로 표시", hidden: inv.status !== "pending", onClick: () => action(inv, { type: "markSent" }, "발송 완료로 표시했습니다.") },
+                              { label: "발송 표시 취소", hidden: !(inv.status === "sent" && !inv.response), onClick: () => action(inv, { type: "unmarkSent" }, "발송 표시를 취소했습니다.") },
+                              { label: "재초청", hidden: inv.status !== "withdrawn", onClick: () => action(inv, { type: "reinvite" }, "다시 초청 상태로 되돌렸습니다.") },
+                              { label: "초청 대상에서 제외", hidden: inv.status !== "pending", onClick: () => action(inv, { type: "remove" }, "초청 대상에서 제외했습니다.") },
+                              { label: "섭외 철회", danger: true, hidden: inv.status === "withdrawn", onClick: () => withdraw(inv) },
+                            ]}
+                          />
+                        )}
                       </td>
                     </tr>
                   );

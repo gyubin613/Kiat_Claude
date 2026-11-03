@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { STATUS_BADGE, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
+import { RowMenu } from "@/components/ui";
+import Today from "@/components/Today";
 import { api, errMsg, Modal, useConfirm, useToast, ApiError } from "@/components/ui";
-import { formatDateKo, formatSlot } from "@/lib/util";
-import type { Slot } from "@/lib/types";
+import { formatDateKo } from "@/lib/util";
+import { DEFAULT_FOLLOWUP, followupOf, type FollowupSettings, type Slot } from "@/lib/types";
 
 type SlotDraft = { id?: string; date: string; start: string; end: string; place: string };
 type Draft = {
@@ -16,6 +17,8 @@ type Draft = {
   seats: number | string;
   requirements: string;
   slots: SlotDraft[];
+  followup: FollowupSettings;
+  conflictKeywords: string;
 };
 
 const emptyDraft = (): Draft => ({
@@ -26,6 +29,8 @@ const emptyDraft = (): Draft => ({
   seats: 5,
   requirements: "",
   slots: [{ date: "", start: "10:00", end: "17:00", place: "" }],
+  followup: { ...DEFAULT_FOLLOWUP },
+  conflictKeywords: "",
 });
 
 function addDays(date: string, n: number) {
@@ -33,6 +38,43 @@ function addDays(date: string, n: number) {
   const d = new Date(date + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
+}
+
+function FollowupEditor({ value: f, onChange }: { value: FollowupSettings; onChange: (f: FollowupSettings) => void }) {
+  const { meta } = useAdmin();
+  const set = (p: Partial<FollowupSettings>) => onChange({ ...f, ...p });
+  const preset = [24, 48, 72].includes(Number(f.hours));
+  return (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <div className="card-body stack" style={{ gap: 10 }}>
+        <label className="row strong">
+          <input type="checkbox" checked={f.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+          무응답 시 다음 순위 위원에게 자동 안내
+        </label>
+        <p className="small muted">초청 메일 발송 후 정한 기간 안에 참석·불참 회신이 없으면, 배석 인원이 부족한 만큼 우선순위 다음 위원을 자동으로 초청합니다. 기존 위원의 초청은 유지되어 늦게라도 회신할 수 있습니다.</p>
+        {f.enabled && (
+          <div className="stack" style={{ gap: 10, paddingLeft: 24 }}>
+            <div className="row">
+              <span className="small">회신 대기 기간</span>
+              {[24, 48, 72].map((h) => (
+                <button key={h} type="button" className={`btn sm ${Number(f.hours) === h ? "primary" : ""}`} onClick={() => set({ hours: h })}>
+                  {h / 24}일({h}시간)
+                </button>
+              ))}
+              <span className="small muted">직접 입력</span>
+              <input className="input" style={{ width: 90 }} type="number" min={1} max={336} value={f.hours} onChange={(e) => set({ hours: e.target.value as unknown as number })} aria-label="회신 대기 시간" />
+              <span className="small">시간 {!preset && f.hours ? `(약 ${(Number(f.hours) / 24).toFixed(1)}일)` : ""}</span>
+            </div>
+            <label className="row small"><input type="checkbox" checked={f.onDecline} onChange={(e) => set({ onDecline: e.target.checked })} /> &lsquo;참석 불가&rsquo; 회신이 오면 기간과 관계없이 바로 다음 순위 위원에게 안내</label>
+            <label className="row small"><input type="checkbox" checked={f.autoSend} onChange={(e) => set({ autoSend: e.target.checked })} /> 초청 메일까지 자동 발송</label>
+            {f.autoSend && !meta?.email.configured && (
+              <div className="notice warn small">이메일 발송 서비스가 설정되지 않아 지금은 다음 순위 위원을 <b>초청 대상에 추가만</b> 하고, 초청 메일 화면에 &lsquo;발송 필요&rsquo;로 표시합니다.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; onClose: () => void }) {
@@ -48,6 +90,8 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
           seats: initial.seats,
           requirements: initial.requirements,
           slots: initial.slots.map((s: Slot) => ({ ...s })),
+          followup: followupOf(initial),
+          conflictKeywords: (initial.conflictKeywords ?? []).join(", "),
         }
       : emptyDraft(),
   );
@@ -66,12 +110,23 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
     if (late) return setErr(`회신 기한(${d.deadline}) 이전의 후보 일정이 있습니다: ${late.date}`);
     setBusy(true);
     try {
-      const payload = { ...d, seats: Number(d.seats), slots };
+      const payload = {
+        ...d,
+        seats: Number(d.seats),
+        slots,
+        followup: { ...d.followup, hours: Number(d.followup.hours) },
+        conflictKeywords: [...new Set(d.conflictKeywords.split(/[,\n]/).map((k) => k.trim()).filter(Boolean))],
+      };
+      if (payload.followup.enabled && (!payload.followup.hours || payload.followup.hours < 1)) {
+        setBusy(false);
+        return setErr("자동 후속 안내 기간을 1시간 이상으로 설정해 주세요.");
+      }
       if (initial) {
         // 변경된 항목만 전송
         const changed: Record<string, unknown> = {};
         (Object.keys(payload) as (keyof typeof payload)[]).forEach((k) => {
-          const before = k === "slots" ? initial.slots : initial[k];
+          const before =
+            k === "slots" ? initial.slots : k === "followup" ? followupOf(initial) : k === "conflictKeywords" ? initial.conflictKeywords ?? [] : initial[k];
           if (JSON.stringify(before) !== JSON.stringify(payload[k])) changed[k] = payload[k];
         });
         if (!Object.keys(changed).length) {
@@ -136,10 +191,16 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
             <input className="input" type="number" min={1} max={50} value={d.seats} onChange={(e) => set("seats", e.target.value)} />
           </div>
           <div className="field full">
+            <label>이해관계 확인 기관 (선택)</label>
+            <input className="input" value={d.conflictKeywords} onChange={(e) => set("conflictKeywords", e.target.value)} placeholder="피평가 기관명을 쉼표로 구분해 입력 (예: 다온테크, 가온대학교)" />
+            <span className="hint">위원의 소속·학사·최종학력 학교에 포함되면 위원 목록에 &lsquo;이해관계 확인&rsquo;으로 표시합니다. 우선순위 점수에는 반영하지 않습니다.</span>
+          </div>
+          <div className="field full">
             <label>참여 요청사항</label>
             <textarea className="textarea" value={d.requirements} onChange={(e) => set("requirements", e.target.value)} placeholder="초청 메일과 회신 화면에 표시됩니다." />
           </div>
         </div>
+        <FollowupEditor value={d.followup} onChange={(f) => set("followup", f)} />
         <div>
           <div className="row between" style={{ marginBottom: 8 }}>
             <h3>후보 일정 및 장소</h3>
@@ -187,7 +248,7 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
 }
 
 export default function EvaluationsPage() {
-  const { evaluations, current, setCurrentId, reload, loading } = useAdmin();
+  const { evaluations, current, setCurrentId, reload, checkFollowups, loading } = useAdmin();
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<EvalWithCounts | "new" | null>(null);
@@ -202,6 +263,7 @@ export default function EvaluationsPage() {
       await reload();
       setCurrentId(null);
       toast("가상 데이터를 불러왔습니다.", "ok");
+      checkFollowups(true);
     } catch (e) {
       toast(errMsg(e), "bad");
     } finally {
@@ -229,77 +291,70 @@ export default function EvaluationsPage() {
 
   return (
     <div className="stack">
-      <div className="page-head">
+      {current && <Today evaluation={current} />}
+
+      <div className="page-head" style={{ marginTop: current ? 8 : 0 }}>
         <div>
-          <h1>① 평가 일정 등록</h1>
-          <p>평가별 기본정보와 후보 일정·장소를 등록합니다. 여러 평가를 각각 독립적으로 관리할 수 있습니다.</p>
+          <h1>평가 목록</h1>
+          <p>평가마다 후보 일정, 배석 인원, 자동 후속 안내를 따로 정합니다.</p>
         </div>
         <div className="row">
           <button className="btn" onClick={seed} disabled={seeding}>{seeding ? "불러오는 중…" : "가상 데이터 불러오기"}</button>
-          <button className="btn primary" onClick={() => setEditing("new")}>+ 새 평가 등록</button>
+          <button className="btn primary" onClick={() => setEditing("new")}>새 평가 등록</button>
         </div>
       </div>
 
-      {!loading && evaluations.length === 0 && (
+      {!loading && evaluations.length === 0 ? (
         <div className="card">
           <div className="empty">
             <div className="strong">등록된 평가가 없습니다.</div>
-            <div>새 평가를 등록하거나, 시연용 가상 데이터를 불러와 전체 업무 흐름을 바로 확인해 보세요.</div>
-            <div className="row">
-              <button className="btn" onClick={seed} disabled={seeding}>{seeding ? "불러오는 중…" : "가상 데이터 불러오기"}</button>
-              <button className="btn primary" onClick={() => setEditing("new")}>+ 새 평가 등록</button>
-            </div>
+            <div>새 평가를 등록하거나, 가상 데이터로 전체 흐름을 먼저 확인해 보세요.</div>
           </div>
         </div>
+      ) : (
+        <div className="card table-wrap">
+          <table className="table">
+            <thead>
+              <tr><th>평가명</th><th>상태</th><th>회신 기한</th><th style={{ minWidth: 170 }}>확보 인원</th><th>자동 후속</th><th></th></tr>
+            </thead>
+            <tbody>
+              {evaluations.map((e) => {
+                const isCurrent = current?.id === e.id;
+                const got = e.status === "finalized" ? e.finalization?.members.length ?? 0 : e.counts.yes;
+                const f = followupOf(e);
+                return (
+                  <tr key={e.id} className={isCurrent ? "selected" : ""}>
+                    <td>
+                      <div className="who">
+                        <b>{e.name}</b>
+                        <span>{[e.department, e.contactName].filter(Boolean).join(" ")} · 후보 일정 {e.slots.length}건</span>
+                      </div>
+                    </td>
+                    <td><span className={`badge ${STATUS_BADGE[e.status].cls}`}>{STATUS_BADGE[e.status].label}</span></td>
+                    <td className="nowrap small">{formatDateKo(e.deadline)}</td>
+                    <td>
+                      <div className="progress">
+                        <span className="small">{got} / {e.seats}명{e.counts.conditional ? ` · 조건부 ${e.counts.conditional}` : ""}</span>
+                        <div className="bar"><span className="yes" style={{ width: `${Math.min(100, (got / e.seats) * 100)}%` }} /></div>
+                      </div>
+                    </td>
+                    <td className="small">{f.enabled ? `${f.hours}시간` : <span className="faint">사용 안 함</span>}</td>
+                    <td className="nowrap" style={{ textAlign: "right" }}>
+                      {!isCurrent && <button className="btn sm" onClick={() => setCurrentId(e.id)}>선택</button>}{" "}
+                      <RowMenu
+                        items={[
+                          { label: "수정", disabled: e.status === "finalized", onClick: () => setEditing(e) },
+                          { label: "삭제", danger: true, onClick: () => remove(e) },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
-
-      {evaluations.map((e) => {
-        const c = e.counts;
-        const isCurrent = current?.id === e.id;
-        return (
-          <div key={e.id} className="card" style={isCurrent ? { borderColor: "var(--primary)", boxShadow: "0 0 0 2px var(--primary-soft)" } : undefined}>
-            <div className="card-head">
-              <div className="row">
-                <h2>{e.name}</h2>
-                <span className={`badge ${STATUS_BADGE[e.status].cls}`}>{STATUS_BADGE[e.status].label}</span>
-                {isCurrent && <span className="badge dark">작업 중</span>}
-              </div>
-              <div className="row">
-                {!isCurrent && <button className="btn sm" onClick={() => setCurrentId(e.id)}>이 평가로 작업</button>}
-                <button className="btn sm" disabled={e.status === "finalized"} title={e.status === "finalized" ? "확정된 평가는 수정할 수 없습니다" : ""} onClick={() => setEditing(e)}>수정</button>
-                <button className="btn sm danger" onClick={() => remove(e)}>삭제</button>
-              </div>
-            </div>
-            <div className="card-body grid-2">
-              <div className="stack" style={{ gap: 6 }}>
-                <div><span className="muted">담당부서</span> {e.department || "-"} {e.contactName && <span className="muted">/ {e.contactName}</span>}</div>
-                <div><span className="muted">회신 기한</span> {formatDateKo(e.deadline)} · <span className="muted">배석 인원</span> {e.seats}명</div>
-                <div className="muted small">후보 일정 {e.slots.length}건</div>
-                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {e.slots.map((s) => (
-                    <li key={s.id} style={e.finalization?.slotId === s.id ? { fontWeight: 700, color: "var(--ok)" } : undefined}>
-                      {formatSlot(s)} {e.finalization?.slotId === s.id && "← 확정"}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div className="stack" style={{ gap: 10 }}>
-                <div className="stats" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-                  <div className="stat"><div className="label">초청</div><div className="value">{c.total - c.withdrawn}</div></div>
-                  <div className="stat ok"><div className="label">참석 가능</div><div className="value">{c.yes + c.conditional}</div></div>
-                  <div className="stat warn"><div className="label">회신 대기</div><div className="value">{c.waiting + c.notSent}</div></div>
-                  <div className="stat bad"><div className="label">불가·철회</div><div className="value">{c.no + c.withdrawn}</div></div>
-                </div>
-                <div className="row">
-                  <Link className="btn sm" href={`/admin/priority?e=${e.id}`} >섭외 우선순위 →</Link>
-                  <Link className="btn sm" href={`/admin/responses?e=${e.id}`} >회신 현황 →</Link>
-                  <Link className="btn sm" href={`/admin/finalize?e=${e.id}`} >최종 확정 →</Link>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })}
 
       {evaluations.length > 0 && (
         <div className="row" style={{ justifyContent: "flex-end" }}>

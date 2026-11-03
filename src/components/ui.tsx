@@ -191,3 +191,41 @@ export function download(url: string) {
   a.click();
   a.remove();
 }
+
+// ---------------- Row menu (더보기) ----------------
+export type MenuItem = { label: string; onClick: () => void; danger?: boolean; disabled?: boolean; hidden?: boolean };
+
+/** 표의 부가 동작을 '더보기' 아래로 모아 한 줄에 버튼이 늘어서지 않게 한다 */
+export function RowMenu({ items, label = "더보기" }: { items: MenuItem[]; label?: string }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const visible = items.filter((i) => !i.hidden);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (ref.current?.open && !ref.current.contains(e.target as Node)) ref.current.open = false;
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  if (!visible.length) return null;
+  return (
+    <details className="menu" ref={ref}>
+      <summary className="btn sm ghost" aria-label={label}>⋯</summary>
+      <div className="menu-pop" role="menu">
+        {visible.map((i) => (
+          <button
+            key={i.label}
+            role="menuitem"
+            className={i.danger ? "danger" : ""}
+            disabled={i.disabled}
+            onClick={() => {
+              if (ref.current) ref.current.open = false;
+              i.onClick();
+            }}
+          >
+            {i.label}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}

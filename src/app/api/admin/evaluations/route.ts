@@ -1,12 +1,30 @@
 import { body, handle, json } from "@/lib/api";
 import { createEvaluation, inviteCounts, listEvaluations, listInvites } from "@/lib/repo";
+import { listThreads } from "@/lib/comm";
+import { followupOf, pendingQuestion } from "@/lib/types";
 import { evaluationInput } from "@/lib/validate";
 
 export const dynamic = "force-dynamic";
 
 export const GET = handle(async () => {
   const evals = await listEvaluations();
-  const withCounts = await Promise.all(evals.map(async (e) => ({ ...e, counts: inviteCounts(await listInvites(e.id)) })));
+  const withCounts = await Promise.all(
+    evals.map(async (e) => {
+      const [invites, threads] = await Promise.all([listInvites(e.id), listThreads(e.id)]);
+      const f = followupOf(e);
+      const now = Date.now();
+      const overdue = invites.filter(
+        (i) => i.status === "sent" && !i.response && i.sentAt && now - new Date(i.sentAt).getTime() >= f.hours * 3600 * 1000,
+      ).length;
+      return {
+        ...e,
+        counts: inviteCounts(invites),
+        unread: threads.reduce((n, t) => n + t.unreadAdmin, 0),
+        questionsWaiting: threads.filter((t) => pendingQuestion(t)).length,
+        overdue,
+      };
+    }),
+  );
   return json({ evaluations: withCounts });
 });
 

@@ -10,11 +10,121 @@ type View = {
   evaluator: { name: string; org: string };
   invite: { status: "pending" | "sent" | "withdrawn"; response: InviteResponse | null };
   result: { slot: Slot; selected: boolean } | null;
+  messages: { id: string; from: "evaluator" | "admin"; body: string; at: string; kind?: "question" | "condition" }[];
+  unread: number;
+  pendingQuestionId: string | null;
+  conditionDecision: "pending" | "accepted" | "rejected" | null;
+  announcements: { id: string; title: string; body: string; at: string }[];
 };
+
+function Question({ token, view, onUpdate }: { token: string; view: View; onUpdate: (m: View["messages"]) => void }) {
+  const q = view.messages.find((m) => m.id === view.pendingQuestionId);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  if (!q || view.invite.status === "withdrawn") return null;
+  async function send() {
+    setBusy(true);
+    setErr("");
+    try {
+      const res = await fetch(`/api/respond/${encodeURIComponent(token)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: text }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "답변을 보내지 못했습니다.");
+      setText("");
+      onUpdate(d.messages);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "답변을 보내지 못했습니다.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="card" style={{ borderColor: "#e8c98a" }}>
+      <div className="card-body stack" style={{ gap: 10 }}>
+        <div className="row between">
+          <h2>담당자 확인 요청</h2>
+          <span className="small faint">{formatDateTime(q.at)}</span>
+        </div>
+        <div style={{ whiteSpace: "pre-wrap" }}>{q.body}</div>
+        <textarea className="textarea" value={text} maxLength={2000} onChange={(e) => setText(e.target.value)} placeholder="답변을 입력해 주십시오." aria-label="확인 요청 답변" />
+        {err && <div className="notice bad">{err}</div>}
+        <button className="btn primary" disabled={busy || !text.trim()} onClick={send}>{busy ? "보내는 중…" : "답변 보내기"}</button>
+      </div>
+    </div>
+  );
+}
+
+function Inquiry({ token, view, onUpdate }: { token: string; view: View; onUpdate: (m: View["messages"]) => void }) {
+  const [open, setOpen] = useState(view.messages.length > 0);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: "ok" | "bad"; text: string } | null>(null);
+  const withdrawn = view.invite.status === "withdrawn";
+  const newReplies = view.unread;
+
+  async function send() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await fetch(`/api/respond/${encodeURIComponent(token)}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: text }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "문의를 보내지 못했습니다.");
+      onUpdate(d.messages);
+      setText("");
+      setMsg({ kind: "ok", text: "문의가 담당자에게 전달되었습니다. 답변은 이 화면과 메일로 안내드립니다." });
+    } catch (e) {
+      setMsg({ kind: "bad", text: e instanceof Error ? e.message : "문의를 보내지 못했습니다." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card" id="inquiry">
+      <div className="card-head">
+        <h2>담당자와의 대화 {newReplies > 0 && <span className="badge bad">새 답변 {newReplies}</span>}</h2>
+        {!open && <button className="btn" onClick={() => setOpen(true)}>문의하기</button>}
+      </div>
+      {open && (
+        <div className="card-body stack" style={{ gap: 12 }}>
+          {view.messages.length > 0 ? (
+            <div className="thread">
+              {view.messages.map((m) => (
+                <div key={m.id} className={`bubble ${m.from}`}>
+                  <div className="bubble-meta">{m.from === "admin" ? `${m.kind === "question" ? "확인 요청 · " : ""}담당자${view.evaluation.contactName ? ` (${view.evaluation.contactName})` : ""}` : m.kind === "condition" ? "조건부 참석 문의 · 위원님" : "위원님"} · {formatDateTime(m.at)}</div>
+                  <div className="bubble-body">{m.body}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="small muted">참석 여부를 회신하시기 전이라도 일정·장소·평가 내용 등 궁금하신 점을 남겨 주시면 담당자가 답변드립니다.</p>
+          )}
+          {withdrawn ? (
+            <p className="small muted">초청이 철회되어 문의를 남길 수 없습니다.</p>
+          ) : (
+            <>
+              <textarea className="textarea" value={text} maxLength={2000} onChange={(e) => { setText(e.target.value); setMsg(null); }} placeholder="문의 내용을 입력해 주십시오." aria-label="문의 내용" />
+              {msg && <div className={`notice ${msg.kind}`} role="status">{msg.text}</div>}
+              <button className="btn primary" disabled={busy || !text.trim()} onClick={send}>{busy ? "보내는 중…" : "문의 보내기"}</button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const OPTIONS: { value: Attendance; label: string; desc: string; cls: string }[] = [
   { value: "yes", label: "참석 가능", desc: "아래 후보 일정 중 가능한 일정을 선택합니다", cls: "" },
-  { value: "conditional", label: "조건부 참석 가능", desc: "시간 조정 등 조건이 있으면 참고사항에 적어 주세요", cls: "cond" },
+  { value: "conditional", label: "조건부 참석 가능", desc: "조건이나 문의사항을 적어 주시면 담당자가 확인 후 답변드립니다", cls: "cond" },
   { value: "no", label: "참석 불가", desc: "일정 선택 없이 바로 제출할 수 있습니다", cls: "no" },
 ];
 
@@ -132,7 +242,34 @@ export default function RespondForm({ token }: { token: string }) {
           </div>
         )}
 
-        {justSaved && <div className="notice ok" role="status"><b>회신이 정상적으로 저장되었습니다.</b> 감사합니다. 일정 확정 전까지는 언제든 이 링크에서 수정하실 수 있습니다.</div>}
+        <Question token={token} view={view} onUpdate={(messages) => setView((v) => (v ? { ...v, messages, pendingQuestionId: null } : v))} />
+
+        {view.announcements.length > 0 && (
+          <div className="card">
+            <div className="card-head"><h2>안내사항</h2></div>
+            <div className="card-body stack">
+              {view.announcements.map((a) => (
+                <div key={a.id}>
+                  <div className="row between"><b>{a.title}</b><span className="small faint">{formatDateTime(a.at)}</span></div>
+                  <div style={{ whiteSpace: "pre-wrap", marginTop: 4 }}>{a.body}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {view.unread > 0 && (
+          <a className="notice ok" href="#inquiry" style={{ display: "block" }}>담당자의 새 메시지가 {view.unread}건 있습니다. 아래 &lsquo;담당자와의 대화&rsquo;에서 확인해 주십시오.</a>
+        )}
+
+        {justSaved && (
+          <div className="notice ok" role="status">
+            <b>회신이 정상적으로 저장되었습니다.</b>{" "}
+            {view.invite.response?.attendance === "conditional"
+              ? "적어 주신 조건·문의사항은 담당자에게 전달되었습니다. 답변은 아래 '담당자와의 대화'와 메일로 드립니다."
+              : "감사합니다. 일정 확정 전까지는 언제든 이 링크에서 수정하실 수 있습니다."}
+          </div>
+        )}
 
         {!editing && r && (
           <div className="card">
@@ -143,7 +280,12 @@ export default function RespondForm({ token }: { token: string }) {
               )}
             </div>
             <div className="card-body stack" style={{ gap: 10 }}>
-              <div><span className="muted">참석 여부</span> <b>{ATTENDANCE_LABEL[r.attendance]}</b></div>
+              <div>
+                <span className="muted">참석 여부</span> <b>{ATTENDANCE_LABEL[r.attendance]}</b>
+                {view.conditionDecision === "pending" && <span className="badge warn" style={{ marginLeft: 6 }}>담당자 답변 대기</span>}
+                {view.conditionDecision === "accepted" && <span className="badge ok" style={{ marginLeft: 6 }}>조건 확인 완료</span>}
+                {view.conditionDecision === "rejected" && <span className="badge bad" style={{ marginLeft: 6 }}>조건 반영 어려움</span>}
+              </div>
               {r.slotIds.length > 0 && (
                 <div>
                   <div className="muted">참석 가능 일정</div>
@@ -202,13 +344,16 @@ export default function RespondForm({ token }: { token: string }) {
 
             {attendance && (
               <div className="card"><div className="card-body">
-                <div className="step-title"><span className="n">{attendance === "no" ? 2 : 3}</span><h2>{attendance === "no" ? "불참 사유 (선택)" : attendance === "conditional" ? "참석 조건 (필수)" : "참고사항 (선택)"}</h2></div>
+                <div className="step-title"><span className="n">{attendance === "no" ? 2 : 3}</span><h2>{attendance === "no" ? "불참 사유 (선택)" : attendance === "conditional" ? "참석 조건 및 문의사항 (필수)" : "참고사항 (선택)"}</h2></div>
+                {attendance === "conditional" && (
+                  <p className="small muted" style={{ margin: "-4px 0 8px" }}>적어 주신 내용은 담당자에게 문의로 전달되며, 답변은 이 화면 아래 &lsquo;담당자와의 대화&rsquo;와 메일로 드립니다.</p>
+                )}
                 <textarea
                   className="textarea"
                   value={note}
                   maxLength={1000}
                   onChange={(ev) => { setNote(ev.target.value); setErr(""); }}
-                  placeholder={attendance === "no" ? "예) 해외 출장 일정과 겹칩니다." : attendance === "conditional" ? "예) 오후 2시 이후 참석 가능합니다." : "일정 조정 요청 등 전달하실 내용이 있으면 적어 주세요."}
+                  placeholder={attendance === "no" ? "예) 해외 출장 일정과 겹칩니다." : attendance === "conditional" ? "예) 오후 2시 이후에만 참석 가능한데 괜찮을까요?" : "일정 조정 요청 등 전달하실 내용이 있으면 적어 주세요."}
                   aria-label="참고사항"
                 />
               </div></div>
@@ -223,6 +368,8 @@ export default function RespondForm({ token }: { token: string }) {
             </div>
           </>
         )}
+
+        <Inquiry token={token} view={view} onUpdate={(messages) => setView((v) => (v ? { ...v, messages } : v))} />
 
         <p className="small faint" style={{ textAlign: "center" }}>
           본 페이지는 위원님께 개별 발송된 링크입니다. 타인과 공유하지 말아 주십시오.

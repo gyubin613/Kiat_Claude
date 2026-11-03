@@ -1,5 +1,5 @@
 import { kv } from "./store";
-import type { Attendance, Evaluation, Evaluator, Invite, Slot } from "./types";
+import { DEFAULT_FOLLOWUP, EDUCATION_DEFAULTS, type Attendance, type ConditionReview, type Evaluation, type Evaluator, type Invite, type Slot } from "./types";
 import { DEFAULT_TEMPLATE } from "./email";
 import { newId, newToken, normalizeEmail, normalizeKey, nowIso } from "./util";
 import type { z } from "zod";
@@ -15,7 +15,7 @@ export class AppError extends Error {
   }
 }
 
-const K = {
+export const K = {
   evals: "evaluations",
   eval: (id: string) => `evaluation:${id}`,
   evaluators: "evaluators",
@@ -24,6 +24,9 @@ const K = {
   invite: (evalId: string, evaluatorId: string) => `invite:${evalId}:${evaluatorId}`,
   token: (t: string) => `token:${t}`,
   evaluatorInvites: (evaluatorId: string) => `evaluatorInvites:${evaluatorId}`,
+  threads: (evalId: string) => `threads:${evalId}`,
+  thread: (evalId: string, evaluatorId: string) => `thread:${evalId}:${evaluatorId}`,
+  announcements: (evalId: string) => `announcements:${evalId}`,
 };
 
 type Versioned = { version: number; updatedAt: string };
@@ -46,7 +49,7 @@ async function updateWithVersion<T extends Versioned>(key: string, expected: num
 }
 
 /** 서버 내부 갱신 — 충돌 시 최신 값으로 재시도 */
-async function updateWithRetry<T extends Versioned>(key: string, mutate: (cur: T) => T, label: string) {
+export async function updateWithRetry<T extends Versioned>(key: string, mutate: (cur: T) => T, label: string) {
   const store = kv();
   for (let attempt = 0; attempt < 6; attempt++) {
     const cur = await store.get<T>(key);
@@ -65,6 +68,7 @@ const pushLog = (inv: Invite, action: string): Invite["log"] => [{ at: nowIso(),
 // ======================= 평가 =======================
 
 type EvaluationInput = z.output<typeof evaluationInput>;
+type EvaluationCreate = Omit<EvaluationInput, "conflictKeywords"> & { conflictKeywords?: string[] };
 
 function normalizeSlots(slots: EvaluationInput["slots"], prev: Slot[] = []): Slot[] {
   const prevIds = new Set(prev.map((s) => s.id));
@@ -92,7 +96,7 @@ export async function getEvaluation(id: string) {
   return e;
 }
 
-export async function createEvaluation(input: EvaluationInput): Promise<Evaluation> {
+export async function createEvaluation(input: EvaluationCreate): Promise<Evaluation> {
   const now = nowIso();
   const e: Evaluation = {
     id: newId("e_"),
@@ -103,8 +107,11 @@ export async function createEvaluation(input: EvaluationInput): Promise<Evaluati
     seats: input.seats,
     requirements: input.requirements,
     slots: normalizeSlots(input.slots),
-    historyWeight: input.historyWeight,
+    historyWeight: input.weights?.history ?? input.historyWeight,
+    weights: input.weights ?? { history: input.historyWeight, preference: 100 - input.historyWeight, overseas: 0 },
+    conflictKeywords: input.conflictKeywords ?? [],
     emailTemplate: input.emailTemplate ?? DEFAULT_TEMPLATE,
+    followup: input.followup ?? { ...DEFAULT_FOLLOWUP },
     status: "draft",
     finalization: null,
     createdAt: now,
@@ -153,9 +160,13 @@ export async function updateEvaluation(id: string, patch: Partial<EvaluationInpu
 export async function deleteEvaluation(id: string) {
   const store = kv();
   const invites = await listInvites(id);
+  const threadIds = await store.smembers(K.threads(id));
   await store.del(
     K.eval(id),
     K.invites(id),
+    K.threads(id),
+    K.announcements(id),
+    ...threadIds.map((v) => K.thread(id, v)),
     ...invites.map((i) => K.invite(id, i.evaluatorId)),
     ...invites.map((i) => K.token(i.token)),
   );
@@ -166,18 +177,25 @@ export async function deleteEvaluation(id: string) {
 // ======================= 평가위원 =======================
 
 type EvaluatorInput = z.output<typeof evaluatorInput>;
+type EduKey = keyof typeof EDUCATION_DEFAULTS;
+type EvaluatorCreate = Omit<EvaluatorInput, EduKey> & Partial<Pick<EvaluatorInput, EduKey>>;
+
+/** 학력 항목이 없던 이전 데이터를 기본값으로 보완 */
+export function normalizeEvaluator(v: Evaluator): Evaluator {
+  return { ...EDUCATION_DEFAULTS, ...v };
+}
 
 export async function listEvaluators(): Promise<Evaluator[]> {
   const store = kv();
   const ids = await store.smembers(K.evaluators);
-  const items = (await store.mget<Evaluator>(ids.map(K.evaluator))).filter(Boolean) as Evaluator[];
+  const items = ((await store.mget<Evaluator>(ids.map(K.evaluator))).filter(Boolean) as Evaluator[]).map(normalizeEvaluator);
   return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
 export async function getEvaluator(id: string) {
   const v = await kv().get<Evaluator>(K.evaluator(id));
   if (!v) throw new AppError(404, "평가위원 정보를 찾을 수 없습니다.");
-  return v;
+  return normalizeEvaluator(v);
 }
 
 type DupTarget = Pick<Evaluator, "id" | "name" | "org" | "email">;
@@ -201,7 +219,7 @@ export function findDuplicate<T extends DupTarget>(
   return null;
 }
 
-export async function createEvaluator(input: EvaluatorInput, opts: { allowDuplicate?: boolean } = {}) {
+export async function createEvaluator(input: EvaluatorCreate, opts: { allowDuplicate?: boolean } = {}) {
   const all = await listEvaluators();
   const dup = findDuplicate(input, all);
   if (dup && !opts.allowDuplicate) {
@@ -214,7 +232,7 @@ export async function createEvaluator(input: EvaluatorInput, opts: { allowDuplic
     );
   }
   const now = nowIso();
-  const v: Evaluator = { id: newId("v_"), ...input, createdAt: now, updatedAt: now, version: 1 };
+  const v: Evaluator = { id: newId("v_"), ...EDUCATION_DEFAULTS, ...input, createdAt: now, updatedAt: now, version: 1 };
   await kv().set(K.evaluator(v.id), v);
   await kv().sadd(K.evaluators, v.id);
   return v;
@@ -232,7 +250,7 @@ export async function updateEvaluator(id: string, patch: Partial<EvaluatorInput>
     K.evaluator(id),
     version,
     (cur) => {
-      const next = { ...cur, ...patch };
+      const next = { ...normalizeEvaluator(cur), ...patch };
       if (next.pastInvited != null && next.pastAttended != null && next.pastAttended > next.pastInvited)
         throw new AppError(400, "참여 횟수는 초청 횟수보다 클 수 없습니다.");
       return next;
@@ -319,7 +337,7 @@ function assertNotFinalized(e: Evaluation) {
   if (e.status === "finalized") throw new AppError(423, "최종 확정된 평가는 초청 정보를 변경할 수 없습니다.");
 }
 
-export async function createInvites(evalId: string, evaluatorIds: string[]) {
+export async function createInvites(evalId: string, evaluatorIds: string[], opts: { logNote?: string; auto?: boolean } = {}) {
   const store = kv();
   const evaluation = await getEvaluation(evalId);
   assertNotFinalized(evaluation);
@@ -340,7 +358,9 @@ export async function createInvites(evalId: string, evaluatorIds: string[]) {
       sentVia: null,
       withdrawnReason: "",
       response: null,
-      log: [{ at: now, action: `${round}차 초청 대상으로 선정` }],
+      log: [{ at: now, action: `${round}차 초청 대상으로 선정${opts.logNote ? ` (${opts.logNote})` : ""}` }],
+      escalatedAt: null,
+      autoInvited: Boolean(opts.auto),
       createdAt: now,
       updatedAt: now,
       version: 1,
@@ -415,6 +435,15 @@ export async function applyInviteAction(evalId: string, evaluatorId: string, act
   );
 }
 
+/** 무응답·불참 위원에 대해 다음 순위 안내 처리를 기록 (중복 처리 방지) */
+export async function markEscalated(evalId: string, evaluatorId: string, note: string) {
+  return updateWithRetry<Invite>(
+    K.invite(evalId, evaluatorId),
+    (inv) => (inv.escalatedAt ? inv : { ...inv, escalatedAt: nowIso(), log: pushLog(inv, note) }),
+    "초청",
+  );
+}
+
 // ---------- 평가위원 회신 (공개 링크) ----------
 
 export async function resolveToken(token: string) {
@@ -450,6 +479,8 @@ export async function submitResponse(token: string, input: z.output<typeof respo
         // 링크로 회신했다면 발송된 것으로 간주
         status: "sent",
         sentAt: inv.sentAt ?? now,
+        // 회신을 수정하면 조건부 검토 결과는 다시 검토하도록 초기화
+        conditionReview: null,
         response: {
           attendance: input.attendance as Attendance,
           slotIds,
@@ -459,6 +490,30 @@ export async function submitResponse(token: string, input: z.output<typeof respo
           revision: (inv.response?.revision ?? 0) + 1,
         },
         log: pushLog(inv, first ? "평가위원 회신 제출" : "평가위원 회신 수정"),
+      };
+    },
+    "초청",
+  );
+}
+
+// ======================= 조건부 참석 검토 =======================
+
+export async function reviewCondition(
+  evalId: string,
+  evaluatorId: string,
+  decision: ConditionReview["decision"] | null,
+  note: string,
+) {
+  assertNotFinalized(await getEvaluation(evalId));
+  return updateWithRetry<Invite>(
+    K.invite(evalId, evaluatorId),
+    (inv) => {
+      if (inv.response?.attendance !== "conditional") throw new AppError(400, "조건부 참석으로 회신한 위원만 검토할 수 있습니다.");
+      if (inv.status === "withdrawn") throw new AppError(400, "철회된 초청입니다.");
+      return {
+        ...inv,
+        conditionReview: decision ? { decision, note, at: nowIso() } : null,
+        log: pushLog(inv, decision ? `조건부 참석 ${decision === "accepted" ? "수락" : "거절"}${note ? `: ${note}` : ""}` : "조건부 검토 취소"),
       };
     },
     "초청",
@@ -484,6 +539,8 @@ export async function finalizeEvaluation(
     const v = evaluators[i];
     if (!inv || !v || inv.status === "withdrawn" || !inv.response || inv.response.attendance === "no" || !inv.response.slotIds.includes(slot.id))
       throw new AppError(400, `${v?.name ?? "선택한 위원"}님은 해당 일정에 참석 가능으로 회신하지 않았습니다.`);
+    if (inv.response.attendance === "conditional" && inv.conditionReview?.decision !== "accepted")
+      throw new AppError(400, `${v.name}님은 조건부 참석 회신입니다. 조건을 먼저 수락해야 확정할 수 있습니다.`);
     return { evaluatorId: id, name: v.name, org: v.org, attendance: inv.response.attendance };
   });
   return updateWithVersion<Evaluation>(
