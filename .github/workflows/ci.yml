@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: 타입 검사
+        run: npm run typecheck
+      - name: 린트
+        run: npm run lint
+      - name: Upstash REST 호환 서버 실행 (Redis 통합 테스트용)
+        run: |
+          docker run -d --name srh -p 8079:80 --network ${{ job.services.redis.network }} \
+            -e SRH_MODE=env -e SRH_TOKEN=test -e SRH_CONNECTION_STRING="redis://redis:6379" \
+            hiett/serverless-redis-http:latest
+          for i in $(seq 1 30); do curl -s -o /dev/null http://localhost:8079 && break; sleep 1; done
+      - name: 테스트 (단위·업무 시나리오·Redis 통합)
+        run: npm test
+        env:
+          REDIS_TEST_URL: http://localhost:8079
+      - name: 빌드
+        run: npm run build
+        env:
+          ADMIN_PASSWORD: ci-only
+
+  e2e:
+    name: 업무 시나리오 E2E (브라우저)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+        env:
+          ADMIN_PASSWORD: ci-only
+      - name: 서버 실행 (메모리 저장소)
+        run: |
+          npm start > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -s -o /dev/null http://localhost:3000/login && break; sleep 1; done
+        env:
+          ADMIN_PASSWORD: ci-only
+      - name: 시나리오 실행
+        run: npm run test:e2e
+        env:
+          BASE_URL: http://localhost:3000
+          ADMIN_PASSWORD: ci-only
+      - name: 화면 캡처 업로드
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e/artifacts/*.png
+            server.log
+          retention-days: 14

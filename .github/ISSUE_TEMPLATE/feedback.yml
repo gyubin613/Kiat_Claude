@@ -1,0 +1,69 @@
+name: 피드백 · 버그 신고
+description: 시제품을 사용하며 발견한 불편사항, 오류, 개선 의견을 남겨 주세요.
+title: "[피드백] "
+labels: ["feedback"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        앱 왼쪽 아래 **💬 피드백·버그 신고** 버튼으로 들어오면 화면 경로와 빌드 정보가 자동으로 채워집니다.
+        ⚠️ 실제 평가위원 개인정보나 내부 업무자료는 적지 마세요.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 유형
+      options:
+        - 오류(버그)
+        - 사용 불편 (UX)
+        - 기능 개선·추가 요청
+        - 질문
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 관련 화면
+      options:
+        - ① 평가 일정 등록
+        - ② 평가위원 명단 (엑셀 포함)
+        - ③ 섭외 우선순위
+        - ④ 초청 메일
+        - ⑤ 회신 현황
+        - ⑥ 최종 확정
+        - 평가 캘린더
+        - 평가위원 회신 화면 (/r/...)
+        - 로그인 · 기타
+  - type: textarea
+    id: what
+    attributes:
+      label: 내용
+      description: 무엇이 문제였는지, 또는 무엇이 바뀌면 좋겠는지 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 재현 순서 (오류인 경우)
+      placeholder: |
+        1. ③ 섭외 우선순위에서 가중치를 80%로 변경
+        2. '이 평가에 저장' 클릭
+        3. ...
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 결과
+  - type: input
+    id: page
+    attributes:
+      label: 화면 경로
+      placeholder: /admin/priority
+  - type: input
+    id: build
+    attributes:
+      label: 빌드 버전
+      placeholder: 앱 왼쪽 아래 build 값
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 스크린샷 (선택)
+      description: 이미지를 끌어다 놓으면 첨부됩니다. 개인정보가 보이지 않게 가려 주세요.
