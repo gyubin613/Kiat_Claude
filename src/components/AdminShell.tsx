@@ -7,8 +7,8 @@ import type { Evaluation } from "@/lib/types";
 import { api, ConfirmProvider, ToastProvider } from "./ui";
 import { daysUntil, formatDateKo } from "@/lib/util";
 
-export type Counts = { total: number; notSent: number; waiting: number; yes: number; conditional: number; no: number; withdrawn: number; responded: number };
-export type EvalWithCounts = Evaluation & { counts: Counts; unread: number };
+export type Counts = { total: number; notSent: number; waiting: number; yes: number; conditional: number; condPending: number; no: number; withdrawn: number; responded: number };
+export type EvalWithCounts = Evaluation & { counts: Counts; unread: number; questionsWaiting: number; overdue: number };
 export type Meta = {
   storage: "redis" | "memory";
   devPassword: boolean;
@@ -36,9 +36,9 @@ export function useAdmin() {
 const LS_KEY = "kiat.currentEvaluation";
 
 const STEPS = [
-  { href: "/admin", label: "평가 일정 등록", step: 1 },
+  { href: "/admin", label: "평가 등록", step: 1 },
   { href: "/admin/evaluators", label: "평가위원 명단", step: 2 },
-  { href: "/admin/priority", label: "섭외 우선순위", step: 3 },
+  { href: "/admin/priority", label: "우선순위·섭외", step: 3 },
   { href: "/admin/invites", label: "초청 메일", step: 4 },
   { href: "/admin/responses", label: "회신 현황", step: 5 },
   { href: "/admin/finalize", label: "최종 확정", step: 6 },
@@ -152,13 +152,12 @@ function Shell({ children }: { children: ReactNode }) {
     }
     return false;
   };
-  const hint = (step: number) => {
-    if (!current) return null;
+  // 사이드바에는 '처리할 일'이 있을 때만 숫자를 표시
+  const badge = (step: number): { n: number; cls: string } | null => {
+    if (!current || current.status === "finalized") return null;
     const c = current.counts;
-    if (step === 2) return meta ? `${meta.evaluatorCount}명` : null;
-    if (step === 3) return `${c.total - c.withdrawn}/${current.seats}`;
-    if (step === 4 && c.notSent) return `미발송 ${c.notSent}`;
-    if (step === 5 && c.total) return `${c.responded}/${c.total - c.withdrawn}`;
+    if (step === 4 && c.notSent) return { n: c.notSent, cls: "warn" };
+    if (step === 5 && c.condPending) return { n: c.condPending, cls: "warn" };
     return null;
   };
 
@@ -178,25 +177,26 @@ function Shell({ children }: { children: ReactNode }) {
             <strong>평가위원 섭외·일정조율</strong>
             <span>통합관리 시스템 (시제품)</span>
           </div>
-          <div className="nav-label">업무 순서</div>
-          {STEPS.map((s) => {
-            const active = s.href === "/admin" ? pathname === "/admin" : pathname.startsWith(s.href);
-            return (
-              <Link key={s.href} href={s.href + q} className={`nav-item ${active ? "active" : ""} ${done(s.step) ? "done" : ""}`}>
-                <span className="nav-step">{done(s.step) && !active ? "✓" : s.step}</span>
-                {s.label}
-                {hint(s.step) && <span className="nav-hint">{hint(s.step)}</span>}
-              </Link>
-            );
-          })}
-          <div className="nav-label">소통</div>
+          <nav className="rail" aria-label="업무 순서">
+            {STEPS.map((s) => {
+              const active = s.href === "/admin" ? pathname === "/admin" : pathname.startsWith(s.href);
+              const b = badge(s.step);
+              return (
+                <Link key={s.href} href={s.href + q} className={`nav-item ${active ? "active" : ""} ${done(s.step) ? "done" : ""}`}>
+                  <span className="nav-step">{done(s.step) && !active ? "✓" : s.step}</span>
+                  {s.label}
+                  {b && <span className={`nav-count ${b.cls}`}>{b.n}</span>}
+                </Link>
+              );
+            })}
+          </nav>
+          <div className="nav-label">소통·조회</div>
           <Link href={"/admin/messages" + q} className={`nav-item ${pathname.startsWith("/admin/messages") ? "active" : ""}`}>
-            <span className="nav-step">✉</span>위원 문의·안내
-            {current?.unread ? <span className="nav-hint" style={{ color: "#fff", background: "var(--bad)", borderRadius: 99, padding: "0 7px" }}>{current.unread}</span> : null}
+            위원 문의·안내
+            {current?.unread ? <span className="nav-count">{current.unread}</span> : null}
           </Link>
-          <div className="nav-label">조회</div>
           <Link href={"/admin/calendar" + q} className={`nav-item ${pathname.startsWith("/admin/calendar") ? "active" : ""}`}>
-            <span className="nav-step">▦</span>평가 캘린더
+            평가 캘린더
           </Link>
           <div className="sidebar-foot">
             {meta && (
@@ -206,7 +206,7 @@ function Shell({ children }: { children: ReactNode }) {
             )}
             {feedbackUrl && (
               <a href={feedbackUrl} target="_blank" rel="noreferrer">
-                💬 피드백·버그 신고 (GitHub)
+                피드백·버그 신고
               </a>
             )}
             {commit && <span className="mono">build {commit}</span>}
@@ -223,7 +223,6 @@ function Shell({ children }: { children: ReactNode }) {
         <div className="main">
           <header className="topbar">
             <div className="current">
-              <span className="current-label">현재 작업 중인 평가</span>
               {evaluations.length ? (
                 <select
                   className="select"
@@ -254,13 +253,14 @@ function Shell({ children }: { children: ReactNode }) {
                     )}
                   </span>
                   <span className="small muted nowrap">배석 {current.seats}명</span>
+                  <Link href={`/admin?e=${current.id}`} className="small" style={{ marginLeft: "auto" }}>할 일 보기</Link>
                 </>
               )}
             </div>
           </header>
           {meta?.storage === "memory" && (
             <div className="notice warn" style={{ borderRadius: 0 }}>
-              시연 모드: 데이터가 서버 메모리에만 저장되어 재배포·재시작 시 초기화됩니다. 여러 사용자가 함께 쓰려면 Upstash Redis를 연결하세요.
+              시연 모드입니다. 데이터가 서버 메모리에만 있어 재배포하면 지워집니다. Vercel에서 Upstash Redis를 연결해 주세요.
             </div>
           )}
           {notice && (

@@ -4,6 +4,7 @@ import { ATTENDANCE_LABEL, DISPLAY_STATE_LABEL, inviteDisplayState } from "./typ
 import { evaluatorInput } from "./validate";
 import { formatDateTime, formatSlot } from "./util";
 import { slotSummary } from "./summary";
+import { bachelorText, finalText } from "./profile";
 import type { z } from "zod";
 
 type Field = keyof z.input<typeof evaluatorInput>;
@@ -18,6 +19,15 @@ const COLUMNS: { field: Field; header: string; aliases: string[]; width: number 
   { field: "pastAttended", header: "과거 참여 횟수", aliases: ["과거참여횟수", "참여횟수", "참여", "참석횟수"], width: 14 },
   { field: "preference", header: "관리자 선호도(1~5)", aliases: ["관리자선호도(1~5)", "관리자선호도", "선호도"], width: 16 },
   { field: "note", header: "비고", aliases: ["비고", "메모", "note"], width: 24 },
+  { field: "bachelorSchool", header: "학사 학교", aliases: ["학사학교", "학사대학", "학부", "출신대학", "학사"], width: 18 },
+  { field: "bachelorMajor", header: "학사 전공", aliases: ["학사전공", "학부전공"], width: 16 },
+  { field: "bachelorAbroad", header: "학사 해외(Y/N)", aliases: ["학사해외(y/n)", "학사해외", "학사해외여부"], width: 12 },
+  { field: "finalDegree", header: "최종학위", aliases: ["최종학위", "최종학력", "학위"], width: 10 },
+  { field: "finalSchool", header: "최종학력 학교", aliases: ["최종학력학교", "최종학교", "최종대학"], width: 18 },
+  { field: "finalMajor", header: "최종학력 전공", aliases: ["최종학력전공", "최종전공"], width: 16 },
+  { field: "finalAbroad", header: "최종학력 해외(Y/N)", aliases: ["최종학력해외(y/n)", "최종학력해외", "최종해외", "최종학력해외여부"], width: 14 },
+  { field: "overseasWorkYears", header: "해외 근무 경력(년)", aliases: ["해외근무경력(년)", "해외근무경력", "해외근무", "해외경력"], width: 14 },
+  { field: "overseasWorkDetail", header: "해외 근무 내용", aliases: ["해외근무내용", "해외근무기관"], width: 24 },
 ];
 
 const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
@@ -93,6 +103,15 @@ export async function parseEvaluatorWorkbook(buf: ArrayBuffer): Promise<{ rows: 
       pastAttended: raw.pastAttended ?? null,
       preference: raw.preference ?? null,
       note: raw.note ?? "",
+      bachelorSchool: raw.bachelorSchool ?? "",
+      bachelorMajor: raw.bachelorMajor ?? "",
+      bachelorAbroad: raw.bachelorAbroad ?? null,
+      finalDegree: raw.finalDegree ?? "",
+      finalSchool: raw.finalSchool ?? "",
+      finalMajor: raw.finalMajor ?? "",
+      finalAbroad: raw.finalAbroad ?? null,
+      overseasWorkYears: raw.overseasWorkYears ?? null,
+      overseasWorkDetail: raw.overseasWorkDetail ?? "",
     });
     const warnings: string[] = [];
     if (!raw.email) warnings.push("이메일 누락");
@@ -124,7 +143,7 @@ export async function buildTemplateWorkbook() {
   const ws = wb.addWorksheet("평가위원 명단");
   ws.columns = COLUMNS.map((c) => ({ header: c.header, key: c.field, width: c.width }));
   styleHeader(ws);
-  ws.addRow({ name: "홍길동", org: "가상대학교", email: "hong@example.com", phone: "010-0000-0000", expertise: "기계설계", pastInvited: 3, pastAttended: 2, preference: 4, note: "예시 행입니다. 삭제 후 사용하세요." });
+  ws.addRow({ name: "홍길동", org: "가상대학교", email: "hong@example.com", phone: "010-0000-0000", expertise: "기계설계", pastInvited: 3, pastAttended: 2, preference: 4, note: "예시 행입니다. 삭제 후 사용하세요.", bachelorSchool: "가상대학교", bachelorMajor: "기계공학", bachelorAbroad: "N", finalDegree: "박사", finalSchool: "Example University", finalMajor: "Mechanical Eng.", finalAbroad: "Y", overseasWorkYears: 2, overseasWorkDetail: "미국 연구소 박사후연구원" });
   ws.addRow({ name: "김예시", org: "가상연구원", email: "", phone: "", expertise: "인공지능", note: "일부 항목이 비어 있어도 등록 후 보완할 수 있습니다." });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
@@ -134,7 +153,8 @@ export async function buildRosterWorkbook(list: Evaluator[]) {
   const ws = wb.addWorksheet("평가위원 명단");
   ws.columns = COLUMNS.map((c) => ({ header: c.header, key: c.field, width: c.width }));
   styleHeader(ws);
-  list.forEach((v) => ws.addRow(v));
+  const yn = (b: boolean | null) => (b == null ? "" : b ? "Y" : "N");
+  list.forEach((v) => ws.addRow({ ...v, bachelorAbroad: yn(v.bachelorAbroad), finalAbroad: yn(v.finalAbroad) }));
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -149,7 +169,9 @@ export async function buildResponsesWorkbook(e: Evaluation, invites: Invite[], e
     { header: "소속기관", key: "org", width: 22 },
     { header: "이메일", key: "email", width: 28 },
     { header: "연락처", key: "phone", width: 16 },
-    { header: "상태", key: "state", width: 12 },
+    { header: "학사", key: "bachelor", width: 26 },
+    { header: "최종학력", key: "final", width: 30 },
+    { header: "상태", key: "state", width: 14 },
     { header: "참석 가능 일정", key: "slots", width: 44 },
     { header: "참고사항", key: "note", width: 36 },
     { header: "발송일시", key: "sentAt", width: 17 },
@@ -164,6 +186,8 @@ export async function buildResponsesWorkbook(e: Evaluation, invites: Invite[], e
       org: v?.org ?? "",
       email: v?.email ?? "",
       phone: v?.phone ?? "",
+      bachelor: v ? bachelorText(v) : "",
+      final: v ? finalText(v) : "",
       state: DISPLAY_STATE_LABEL[inviteDisplayState(inv)],
       slots: inv.response?.slotIds.map((id) => slotLabel.get(id) ?? "").filter(Boolean).join("\n") ?? "",
       note: [inv.response?.note, inv.withdrawnReason && `철회 사유: ${inv.withdrawnReason}`].filter(Boolean).join("\n"),
@@ -177,7 +201,7 @@ export async function buildResponsesWorkbook(e: Evaluation, invites: Invite[], e
     { header: "후보 일정", key: "slot", width: 40 },
     { header: "장소", key: "place", width: 22 },
     { header: "참석 가능", key: "yes", width: 10 },
-    { header: "조건부", key: "cond", width: 10 },
+    { header: "조건부(검토 전)", key: "cond", width: 14 },
     { header: "합계", key: "total", width: 8 },
     { header: `배석 인원(${e.seats}명) 충족`, key: "meets", width: 16 },
     { header: "참석 가능 위원", key: "names", width: 50 },
@@ -186,12 +210,13 @@ export async function buildResponsesWorkbook(e: Evaluation, invites: Invite[], e
   for (const s of slotSummary(e, invites)) {
     const names = [
       ...s.yes.map((id) => evaluators.get(id)?.name ?? ""),
-      ...s.conditional.map((id) => `${evaluators.get(id)?.name ?? ""}(조건부)`),
+      ...s.accepted.map((id) => `${evaluators.get(id)?.name ?? ""}(조건부 수락)`),
+      ...s.conditional.map((id) => `${evaluators.get(id)?.name ?? ""}(조건 검토 전)`),
     ].join(", ");
     ws2.addRow({
       slot: formatSlot(s.slot, false),
       place: s.slot.place,
-      yes: s.yes.length,
+      yes: s.confirmable,
       cond: s.conditional.length,
       total: s.total,
       meets: s.meetsSeats ? "충족" : s.meetsSeatsWithConditional ? "조건부 포함 시 충족" : "부족",

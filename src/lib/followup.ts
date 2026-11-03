@@ -8,7 +8,8 @@ export function cronBaseUrl(fallback?: string) {
 }
 import { canAutoSend, deliver, renderTemplate } from "./email";
 import { rankEvaluators } from "./scoring";
-import { followupOf, type Evaluation, type Invite } from "./types";
+import { isDeclined } from "./summary";
+import { followupOf, weightsOf, type Evaluation, type Invite } from "./types";
 
 export type FollowupPlan = {
   needed: number;
@@ -22,11 +23,12 @@ export function planFollowup(e: Evaluation, invites: Invite[], now: Date): Follo
   const windowMs = f.hours * 3600 * 1000;
   const active = invites.filter((i) => i.status !== "withdrawn");
   const isOverdue = (i: Invite) => i.status === "sent" && !i.response && !!i.sentAt && now.getTime() - new Date(i.sentAt).getTime() >= windowMs;
-  const confirmed = active.filter((i) => i.response && i.response.attendance !== "no").length;
+  // 확정 후보 + 검토 전 조건부 회신을 확보 인원으로 본다 (거절된 조건부·불참 제외)
+  const confirmed = active.filter((i) => i.response && !isDeclined(i)).length;
   const inWindow = active.filter((i) => i.status === "sent" && !i.response && !isOverdue(i)).length;
   const notSent = active.filter((i) => i.status === "pending").length;
   const triggers = active.filter(
-    (i) => !i.escalatedAt && (isOverdue(i) || (f.onDecline && i.response?.attendance === "no")),
+    (i) => !i.escalatedAt && (isOverdue(i) || (f.onDecline && isDeclined(i))),
   );
   return {
     needed: Math.max(0, e.seats - confirmed - inWindow - notSent),
@@ -53,12 +55,13 @@ export async function runFollowupFor(evalId: string, baseUrl: string, now = new 
 
   const k = Math.min(plan.needed, plan.triggers.length);
   const invitedIds = new Set(invites.map((i) => i.evaluatorId));
-  const ranked = rankEvaluators(await listEvaluators(), e.historyWeight).filter((v) => !invitedIds.has(v.id));
+  const ranked = rankEvaluators(await listEvaluators(), weightsOf(e)).filter((v) => !invitedIds.has(v.id));
   // 자동 발송이 켜져 있으면 이메일이 있는 위원을 우선
   const pool = f.autoSend ? [...ranked.filter((v) => v.email), ...ranked.filter((v) => !v.email)] : ranked;
   const picks = pool.slice(0, k);
 
-  const reason = (i: Invite) => (i.response?.attendance === "no" ? "참석 불가" : `${f.hours}시간 무응답`);
+  const reason = (i: Invite) =>
+    i.response?.attendance === "no" ? "참석 불가" : i.response ? "조건부 거절" : `${f.hours}시간 무응답`;
   const note =
     k === 0
       ? "필요 인원이 확보되어 추가 안내 없음"

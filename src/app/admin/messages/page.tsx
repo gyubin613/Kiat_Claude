@@ -15,6 +15,8 @@ import {
   type AnnouncementAudience,
   type MailResult,
   type Thread,
+  pendingQuestion,
+  unansweredInquiry,
 } from "@/lib/types";
 import { formatDateTime } from "@/lib/util";
 
@@ -39,6 +41,7 @@ function Conversation({
   const [thread, setThread] = useState<Thread | null>(null);
   const [text, setText] = useState("");
   const [sendEmail, setSendEmail] = useState(true);
+  const [mode, setMode] = useState<"reply" | "question">("reply");
   const [busy, setBusy] = useState(false);
   const [fallback, setFallback] = useState<{ href: string; reason?: string } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -70,14 +73,15 @@ function Conversation({
     try {
       const r = await api<{ thread: Thread; email: MailResult; link: string }>(`/api/admin/evaluations/${evaluation.id}/messages/${evaluatorId}`, {
         method: "POST",
-        json: { body: text, sendEmail },
+        json: { body: text, sendEmail, kind: mode },
       });
       setThread(r.thread);
-      if (r.email.status === "sent") toast("답변을 게시하고 메일로 발송했습니다.", "ok");
+      const what = mode === "question" ? "확인 요청" : "답변";
+      if (r.email.status === "sent") toast(`${what}을 게시하고 메일로 보냈습니다.`, "ok");
       else if (sendEmail && v?.email) {
-        setFallback({ href: mailtoUrl(v.email, replyMail(evaluation, v, text, r.link)), reason: r.email.detail });
-        toast("답변을 게시했습니다. 메일은 자동 발송되지 않아 수동 발송이 필요합니다.", "info");
-      } else toast("답변을 회신 화면에 게시했습니다.", "ok");
+        setFallback({ href: mailtoUrl(v.email, replyMail(evaluation, v, text, r.link, mode === "question" ? { kind: "question" } : {})), reason: r.email.detail });
+        toast(`${what}을 게시했습니다. 메일은 직접 보내 주세요.`, "info");
+      } else toast(`${what}을 위원 회신 화면에 게시했습니다.`, "ok");
       setText("");
       onChanged();
     } catch (e) {
@@ -104,7 +108,8 @@ function Conversation({
         {thread?.messages.map((m) => (
           <div key={m.id} className={`bubble ${m.from}`}>
             <div className="bubble-meta">
-              {m.from === "admin" ? "담당자" : v.name} · {formatDateTime(m.at)}
+              {m.from === "admin" ? (m.kind === "question" ? "담당자 확인 요청" : "담당자") : v.name} · {formatDateTime(m.at)}
+              {m.kind === "question" && (pendingQuestion(thread)?.id === m.id ? <span className="badge warn">답변 대기</span> : <span className="badge ok">답변 받음</span>)}
               {m.email && m.from === "admin" && (
                 <span className={`badge ${MAIL_BADGE[m.email.status][1]}`} title={m.email.detail}>{MAIL_BADGE[m.email.status][0]}</span>
               )}
@@ -115,13 +120,17 @@ function Conversation({
         <div ref={endRef} />
       </div>
       <div className="stack" style={{ gap: 8 }}>
-        <textarea className="textarea" placeholder="답변 또는 개별 안내 내용을 입력하세요. 위원의 회신 화면에 게시됩니다." value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} aria-label="답변 내용" />
+        <div className="seg" role="radiogroup" aria-label="보낼 내용 종류">
+          <button className={mode === "reply" ? "on" : ""} onClick={() => setMode("reply")} role="radio" aria-checked={mode === "reply"}>답변·안내</button>
+          <button className={mode === "question" ? "on" : ""} onClick={() => setMode("question")} role="radio" aria-checked={mode === "question"}>확인 요청 (답변 받기)</button>
+        </div>
+        <textarea className="textarea" placeholder={mode === "question" ? "위원에게 확인할 사항을 적어 주세요. 위원이 회신 화면에서 답하면 여기에 표시됩니다." : "답변 또는 개별 안내 내용을 입력하세요. 위원의 회신 화면에 게시됩니다."} value={text} onChange={(e) => setText(e.target.value)} maxLength={2000} aria-label="답변 내용" />
         <div className="row between">
           <label className="row small">
             <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} />
             위원에게 메일로도 보내기 {!meta?.email.configured && <span className="faint">(발송 서비스 미설정: 메일 앱으로 열기 제공)</span>}
           </label>
-          <button className="btn primary" disabled={busy || !text.trim()} onClick={send}>{busy ? "보내는 중…" : "답변 보내기"}</button>
+          <button className="btn primary" disabled={busy || !text.trim()} onClick={send}>{busy ? "보내는 중…" : mode === "question" ? "확인 요청 보내기" : "답변 보내기"}</button>
         </div>
         {fallback && (
           <div className="notice warn row between">
@@ -142,6 +151,7 @@ function Announcements({ evaluation, items, onChanged }: { evaluation: EvalWithC
   const [body, setBody] = useState("");
   const [audience, setAudience] = useState<AnnouncementAudience>("all");
   const [sendEmail, setSendEmail] = useState(true);
+  const [askReply, setAskReply] = useState(false);
   const [busy, setBusy] = useState(false);
   const [failures, setFailures] = useState<{ name: string; detail?: string; link: string; email: string }[]>([]);
   const [lastSent, setLastSent] = useState({ title: "", body: "" });
@@ -158,7 +168,7 @@ function Announcements({ evaluation, items, onChanged }: { evaluation: EvalWithC
     try {
       const r = await api<{ announcement: Announcement; failures: typeof failures }>(`/api/admin/evaluations/${evaluation.id}/announcements`, {
         method: "POST",
-        json: { title, body, audience, sendEmail },
+        json: { title, body, audience, sendEmail, askReply },
       });
       const res = r.announcement.result;
       toast(`${r.announcement.recipientIds.length}명에게 게시했습니다. 메일 발송 ${res.sent}건${res.failed ? ` · 실패 ${res.failed}건` : ""}${sendEmail && res.skipped ? ` · 미발송 ${res.skipped}건` : ""}`, res.failed ? "bad" : "ok");
@@ -190,6 +200,7 @@ function Announcements({ evaluation, items, onChanged }: { evaluation: EvalWithC
           </div>
           <div className="field"><label>제목</label><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예) 사전 검토자료 송부 안내" maxLength={120} /></div>
           <div className="field"><label>내용</label><textarea className="textarea" style={{ minHeight: 160 }} value={body} onChange={(e) => setBody(e.target.value)} maxLength={5000} /></div>
+          <label className="row small"><input type="checkbox" checked={askReply} onChange={(e) => setAskReply(e.target.checked)} /> 답변 요청 (위원별 대화에 확인 요청으로 남기고, 답변을 받아 확인)</label>
           <label className="row small"><input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} /> 메일로도 발송 (회신 화면에는 항상 게시)</label>
           <button className="btn primary" disabled={busy || !title.trim() || !body.trim() || !targets.length} onClick={send}>{busy ? "보내는 중…" : `${targets.length}명에게 보내기`}</button>
           {failures.length > 0 && (
@@ -218,7 +229,7 @@ function Announcements({ evaluation, items, onChanged }: { evaluation: EvalWithC
                   <span className="small muted">{formatDateTime(a.at)}</span>
                 </div>
                 <div className="small muted" style={{ margin: "2px 0 6px" }}>
-                  {AUDIENCE_LABEL[a.audience]} {a.recipientIds.length}명 · {a.sendEmail ? `메일 발송 ${a.result.sent} / 실패 ${a.result.failed} / 미발송 ${a.result.skipped}` : "게시만"}
+                  {a.askReply && <span className="badge warn" style={{ marginRight: 6 }}>답변 요청</span>}{AUDIENCE_LABEL[a.audience]} {a.recipientIds.length}명 · {a.sendEmail ? `메일 발송 ${a.result.sent} / 실패 ${a.result.failed} / 미발송 ${a.result.skipped}` : "게시만"}
                 </div>
                 <div className="small" style={{ whiteSpace: "pre-wrap" }}>{a.body}</div>
               </div>
@@ -266,13 +277,19 @@ function Messages({ evaluation }: { evaluation: EvalWithCounts }) {
       return (tb?.unreadAdmin ?? 0) - (ta?.unreadAdmin ?? 0) || (tb?.lastAt ?? "").localeCompare(ta?.lastAt ?? "");
     });
   const unread = threads.reduce((n, t) => n + t.unreadAdmin, 0);
+  // 처음 열면 확인이 필요한 위원(새 문의 → 미답변)을 자동으로 선택
+  useEffect(() => {
+    if (selected || !threads.length) return;
+    const t = threads.find((x) => x.unreadAdmin) ?? threads.find((x) => unansweredInquiry(x));
+    if (t) setSelected(t.evaluatorId);
+  }, [threads, selected]);
 
   return (
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>위원 문의 · 안내</h1>
-          <p>위원이 회신 화면에 남긴 문의에 답하고, 추가 안내사항을 게시·메일 발송합니다. 답변은 위원의 회신 화면에 표시되고 메일로도 전달됩니다.</p>
+          <h1>위원 문의·안내</h1>
+          <p>위원 문의에 답하고, 확인할 사항을 물어 답변을 받습니다. 보낸 내용은 위원 회신 화면에 게시되고 메일로도 갑니다.</p>
         </div>
       </div>
       <div className="tabs">
@@ -295,7 +312,15 @@ function Messages({ evaluation }: { evaluation: EvalWithCounts }) {
                 <button key={i.evaluatorId} className={`msg-item ${selected === i.evaluatorId ? "on" : ""}`} onClick={() => setSelected(i.evaluatorId)}>
                   <div className="row between">
                     <b>{v?.name}</b>
-                    {t?.unreadAdmin ? <span className="badge bad">새 문의 {t.unreadAdmin}</span> : last ? <span className="small faint">{formatDateTime(last.at).slice(5)}</span> : null}
+                    {t?.unreadAdmin ? (
+                      <span className="badge bad">{t.messages.some((m) => m.kind === "question") && last?.from === "evaluator" ? "답변 도착" : "새 문의"} {t.unreadAdmin}</span>
+                    ) : pendingQuestion(t) ? (
+                      <span className="badge warn">답변 대기</span>
+                    ) : unansweredInquiry(t) ? (
+                      <span className="badge warn">미답변</span>
+                    ) : last ? (
+                      <span className="small faint">{formatDateTime(last.at).slice(5)}</span>
+                    ) : null}
                   </div>
                   <div className="small muted msg-preview">{last ? `${last.from === "admin" ? "↳ " : ""}${last.body}` : `${v?.org ?? ""} · ${DISPLAY_STATE_LABEL[inviteDisplayState(i)]}`}</div>
                 </button>

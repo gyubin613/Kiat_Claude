@@ -1,6 +1,7 @@
 import { body, handle, json } from "@/lib/api";
 import { resolveToken, submitResponse } from "@/lib/repo";
 import { getThread, listAnnouncements, markReadByEvaluator } from "@/lib/comm";
+import { pendingQuestion } from "@/lib/types";
 import { responseInput } from "@/lib/validate";
 
 type Ctx = { params: Promise<{ token: string }> };
@@ -26,7 +27,9 @@ async function view(token: string, markRead = false) {
     evaluator: { name: v.name, org: v.org },
     invite: { status: inv.status, response: inv.response },
     // 본인 대화와 본인에게 보낸 안내만 공개 (메일 발송 결과 등 내부 정보 제외)
-    messages: (thread?.messages ?? []).map((m) => ({ id: m.id, from: m.from, body: m.body, at: m.at })),
+    messages: (thread?.messages ?? []).map((m) => ({ id: m.id, from: m.from, body: m.body, at: m.at, kind: m.kind })),
+    pendingQuestionId: pendingQuestion(thread)?.id ?? null,
+    conditionDecision: inv.response?.attendance === "conditional" ? (inv.conditionReview?.decision ?? "pending") : null,
     unread: thread?.unreadEvaluator ?? 0,
     announcements: announcements
       .filter((a) => a.recipientIds.includes(v.id))

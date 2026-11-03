@@ -2,7 +2,7 @@
 import { kv } from "./store";
 import { AppError, getEvaluation, getEvaluator, K, listInvites, resolveToken, updateWithRetry } from "./repo";
 import { adminNotifyMail, announcementMail, deliver, replyMail } from "./email";
-import type { Announcement, AnnouncementAudience, AnnouncementDoc, Evaluator, Message, Thread } from "./types";
+import { pendingQuestion, type Announcement, type AnnouncementAudience, type AnnouncementDoc, type Evaluator, type Message, type Thread } from "./types";
 import { newId, nowIso } from "./util";
 import { audienceOfClient as audienceOf } from "./summary";
 
@@ -56,20 +56,26 @@ export async function postEvaluatorMessage(token: string, body: string, baseUrl:
   const { evaluation, evaluator, invite } = await resolveToken(token);
   if (invite.status === "withdrawn") throw new AppError(403, "초청이 철회되어 문의를 남길 수 없습니다. 담당자에게 직접 연락해 주십시오.");
   await ensureThread(evaluation.id, evaluator.id);
+  const wasAnswer = Boolean(pendingQuestion(await getThread(evaluation.id, evaluator.id)));
   const msg: Message = { id: newId("m_"), from: "evaluator", body, at: nowIso() };
   const t = await updateWithRetry<Thread>(
     K.thread(evaluation.id, evaluator.id),
     (cur) => {
-      const last = [...cur.messages].reverse().find((m) => m.from === "evaluator");
-      if (last && Date.now() - new Date(last.at).getTime() < MIN_INTERVAL_MS)
-        throw new AppError(429, "잠시 후 다시 시도해 주십시오.");
+      // 연속 전송만 제한 (담당자 메시지 이후의 답변은 바로 허용)
+      const last = cur.messages.at(-1);
+      if (last?.from === "evaluator" && Date.now() - new Date(last.at).getTime() < MIN_INTERVAL_MS)
+        throw new AppError(429, "방금 보내신 메시지가 접수되었습니다. 5초 후에 다시 보내 주십시오.");
       return append(cur, msg);
     },
     "문의",
   );
   // 담당자 알림 메일 (설정된 경우)
   const notifyTo = process.env.ADMIN_NOTIFY_EMAIL;
-  if (notifyTo && opts.notify !== false) await deliver(notifyTo, adminNotifyMail(evaluation, evaluator, body, `${baseUrl}/admin/messages?e=${evaluation.id}&v=${evaluator.id}`));
+  if (notifyTo && opts.notify !== false)
+    await deliver(
+      notifyTo,
+      adminNotifyMail(evaluation, evaluator, body, `${baseUrl}/admin/messages?e=${evaluation.id}&v=${evaluator.id}`, wasAnswer),
+    );
   return t;
 }
 
@@ -87,15 +93,22 @@ export async function markReadByAdmin(evalId: string, evaluatorId: string) {
 }
 
 /** 관리자 답변·개별 안내 → 홈페이지에 게시 + (선택) 메일 발송 */
-export async function postAdminMessage(evalId: string, evaluatorId: string, body: string, sendEmail: boolean, baseUrl: string) {
+export async function postAdminMessage(
+  evalId: string,
+  evaluatorId: string,
+  body: string,
+  sendEmail: boolean,
+  baseUrl: string,
+  opts: { kind?: "question"; subject?: string } = {},
+) {
   const [evaluation, evaluator, invites] = await Promise.all([getEvaluation(evalId), getEvaluator(evaluatorId), listInvites(evalId)]);
   const inv = invites.find((i) => i.evaluatorId === evaluatorId);
   if (!inv) throw new AppError(404, "이 평가에 초청된 위원이 아닙니다.");
   const email = sendEmail
-    ? await deliver(evaluator.email, replyMail(evaluation, evaluator, body, `${baseUrl}/r/${inv.token}`))
+    ? await deliver(evaluator.email, replyMail(evaluation, evaluator, body, `${baseUrl}/r/${inv.token}`, opts))
     : ({ status: "skipped", detail: "메일 발송 안 함" } as const);
   await ensureThread(evalId, evaluatorId);
-  const msg: Message = { id: newId("m_"), from: "admin", body, at: nowIso(), email };
+  const msg: Message = { id: newId("m_"), from: "admin", body, at: nowIso(), email, ...(opts.kind ? { kind: opts.kind } : {}) };
   // 답변하면 해당 위원의 미확인 문의는 읽음 처리
   const t = await updateWithRetry<Thread>(K.thread(evalId, evaluatorId), (cur) => ({ ...append(cur, msg), unreadAdmin: 0 }), "문의");
   return { thread: t, email, link: `${baseUrl}/r/${inv.token}` };
@@ -111,7 +124,7 @@ export { audienceOf };
 
 export async function createAnnouncement(
   evalId: string,
-  input: { title: string; body: string; audience: AnnouncementAudience; sendEmail: boolean },
+  input: { title: string; body: string; audience: AnnouncementAudience; sendEmail: boolean; askReply?: boolean },
   baseUrl: string,
 ) {
   const [evaluation, invites] = await Promise.all([getEvaluation(evalId), listInvites(evalId)]);
@@ -128,9 +141,17 @@ export async function createAnnouncement(
       result.skipped++;
       continue;
     }
-    const r = await deliver(v.email, announcementMail(evaluation, v, input.title, input.body, link));
+    const r = await deliver(v.email, announcementMail(evaluation, v, input.title, input.body, link, input.askReply));
     result[r.status]++;
     if (r.status !== "sent") failures.push({ name: v.name, detail: r.detail, link, email: v.email });
+  }
+  // 답변 요청: 각 위원 대화에 확인 요청으로 남겨 위원 화면에서 답변받고 관리자 화면에서 확인
+  if (input.askReply) {
+    for (const t of targets) {
+      await ensureThread(evalId, t.evaluatorId);
+      const msg: Message = { id: newId("m_"), from: "admin", kind: "question", body: `[${input.title}]\n${input.body}`, at: nowIso(), email: { status: input.sendEmail ? "sent" : "skipped", detail: "안내사항과 함께 발송" } };
+      await updateWithRetry<Thread>(K.thread(evalId, t.evaluatorId), (cur) => append(cur, msg), "문의");
+    }
   }
   const a: Announcement = {
     id: newId("a_"),
@@ -140,6 +161,7 @@ export async function createAnnouncement(
     recipientIds: targets.map((t) => t.evaluatorId),
     at: nowIso(),
     sendEmail: input.sendEmail,
+    askReply: Boolean(input.askReply),
     result,
   };
   const now = nowIso();

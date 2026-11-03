@@ -9,5 +9,5 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
   const { token } = await params;
   const { body: text } = await body(req, messageInput);
   const t = await postEvaluatorMessage(token, text, baseUrl(req));
-  return json({ messages: t.messages.map((m) => ({ id: m.id, from: m.from, body: m.body, at: m.at })) }, 201);
+  return json({ messages: t.messages.map((m) => ({ id: m.id, from: m.from, body: m.body, at: m.at, kind: m.kind })) }, 201);
 });

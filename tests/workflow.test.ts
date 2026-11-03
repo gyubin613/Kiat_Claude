@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { __resetKvForTests } from "@/lib/store";
 import {
   applyInviteAction, createEvaluation, createEvaluator, createInvites, finalizeEvaluation, getEvaluation,
-  importEvaluators, listInvites, resolveToken, slotSummary, submitResponse, updateEvaluation, updateEvaluator,
+  importEvaluators, listInvites, reviewCondition, resolveToken, slotSummary, submitResponse, updateEvaluation, updateEvaluator,
 } from "@/lib/repo";
 import { evaluatorInput } from "@/lib/validate";
 import { renderTemplate, DEFAULT_TEMPLATE, recipientAllowed } from "@/lib/email";
@@ -80,6 +80,7 @@ describe("업무 시나리오", () => {
 
     const sum = slotSummary(await getEvaluation(e.id), await listInvites(e.id));
     expect(sum[0]).toMatchObject({ total: 2, meetsSeats: false, meetsSeatsWithConditional: true });
+    await reviewCondition(e.id, vs[0].id, "accepted", "");
     expect(sum[1].total).toBe(0);
 
     // 불참자는 확정 불가

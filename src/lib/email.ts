@@ -120,23 +120,34 @@ const head = (e: Pick<Evaluation, "department" | "name">) => `${e.department ? `
 const sign = (e: Pick<Evaluation, "department" | "contactName">) =>
   `\n\n${[e.department, e.contactName].filter(Boolean).join(" ") || "평가 운영 담당자"} 드림`;
 
-export function replyMail(e: Evaluation, v: Pick<Evaluator, "name">, body: string, link: string): EmailTemplate {
+export function replyMail(
+  e: Evaluation,
+  v: Pick<Evaluator, "name">,
+  body: string,
+  link: string,
+  opts: { kind?: "question"; subject?: string } = {},
+): EmailTemplate {
+  if (opts.kind === "question")
+    return {
+      subject: opts.subject ?? `${head(e)} 확인 요청`,
+      body: `${v.name} 위원님께\n\n아래 사항을 확인하시어 회신 부탁드립니다.\n\n${body}\n\n▶ 답변하기: ${link}\n(링크에서 '담당자와의 대화'에 답변을 남겨 주십시오.)${sign(e)}`,
+    };
   return {
-    subject: `${head(e)} 문의에 대한 답변`,
-    body: `${v.name} 위원님께\n\n문의하신 내용에 대해 아래와 같이 답변드립니다.\n\n${body}\n\n추가 문의나 회신은 아래 개인 링크에서 하실 수 있습니다.\n▶ ${link}${sign(e)}`,
+    subject: opts.subject ?? `${head(e)} 담당자 안내`,
+    body: `${v.name} 위원님께\n\n${body}\n\n추가 문의나 회신은 아래 개인 링크에서 하실 수 있습니다.\n▶ ${link}${sign(e)}`,
   };
 }
 
-export function announcementMail(e: Evaluation, v: Pick<Evaluator, "name">, title: string, body: string, link: string): EmailTemplate {
+export function announcementMail(e: Evaluation, v: Pick<Evaluator, "name">, title: string, body: string, link: string, askReply = false): EmailTemplate {
   return {
-    subject: `${head(e)} 안내: ${title}`,
-    body: `${v.name} 위원님께\n\n「${e.name}」 관련 안내사항을 알려드립니다.\n\n■ ${title}\n${body}\n\n문의·회신: ▶ ${link}${sign(e)}`,
+    subject: `${head(e)} ${askReply ? "확인 요청" : "안내"}: ${title}`,
+    body: `${v.name} 위원님께\n\n「${e.name}」 관련 ${askReply ? "확인 요청드릴 사항이 있습니다" : "안내사항을 알려드립니다"}.\n\n■ ${title}\n${body}\n\n${askReply ? "▶ 답변하기" : "문의·회신"}: ${link}${sign(e)}`,
   };
 }
 
-export function adminNotifyMail(e: Evaluation, v: Pick<Evaluator, "name" | "org">, body: string, adminLink: string): EmailTemplate {
+export function adminNotifyMail(e: Evaluation, v: Pick<Evaluator, "name" | "org">, body: string, adminLink: string, isAnswer = false): EmailTemplate {
   return {
-    subject: `[문의 접수] ${e.name} - ${v.name} 위원`,
-    body: `${v.name}(${v.org || "소속 미입력"}) 위원이 문의를 남겼습니다.\n\n${body}\n\n답변하기: ${adminLink}`,
+    subject: `[${isAnswer ? "확인 요청 답변" : "문의 접수"}] ${e.name} - ${v.name} 위원`,
+    body: `${v.name}(${v.org || "소속 미입력"}) 위원이 ${isAnswer ? "확인 요청에 답변했습니다" : "문의를 남겼습니다"}.\n\n${body}\n\n확인하기: ${adminLink}`,
   };
 }

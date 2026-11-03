@@ -19,5 +19,7 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
     return json({ thread: await markReadByAdmin(id, evaluatorId) });
   }
   const input = await body(req, adminMessageInput);
-  return json(await postAdminMessage(id, evaluatorId, input.body, input.sendEmail, baseUrl(req)));
+  return json(
+    await postAdminMessage(id, evaluatorId, input.body, input.sendEmail, baseUrl(req), input.kind === "question" ? { kind: "question" } : {}),
+  );
 });
