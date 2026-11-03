@@ -22,7 +22,9 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
   const [busy, setBusy] = useState(false);
   const locked = evaluation.status === "finalized";
 
-  useEffect(() => setWeight(evaluation.historyWeight), [evaluation.id, evaluation.historyWeight]);
+  useEffect(() => {
+    setWeight(evaluation.historyWeight);
+  }, [evaluation.id, evaluation.historyWeight]);
 
   const inviteMap = useMemo(() => new Map((invites ?? []).map((i) => [i.evaluatorId, i])), [invites]);
   const ranked = useMemo(() => rankEvaluators(evaluators ?? [], weight), [evaluators, weight]);

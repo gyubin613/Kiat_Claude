@@ -1,5 +1,5 @@
 // 회신 집계 (서버·브라우저 공용 순수 함수)
-import type { Evaluation, Invite } from "./types";
+import type { AnnouncementAudience, Evaluation, Invite } from "./types";
 
 
 export function slotSummary(evaluation: Evaluation, invites: Invite[]) {
@@ -31,3 +31,13 @@ export function inviteCounts(invites: Invite[]) {
   return c;
 }
 
+
+/** 안내 대상 위원 선별 */
+export function audienceOfClient(invites: Invite[], audience: AnnouncementAudience) {
+  return invites.filter((i) => {
+    if (i.status === "withdrawn") return false;
+    if (audience === "waiting") return !i.response;
+    if (audience === "attending") return !!i.response && i.response.attendance !== "no";
+    return true;
+  });
+}

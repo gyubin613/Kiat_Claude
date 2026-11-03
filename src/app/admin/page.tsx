@@ -5,7 +5,7 @@ import Link from "next/link";
 import { STATUS_BADGE, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { api, errMsg, Modal, useConfirm, useToast, ApiError } from "@/components/ui";
 import { formatDateKo, formatSlot } from "@/lib/util";
-import type { Slot } from "@/lib/types";
+import { DEFAULT_FOLLOWUP, followupOf, type FollowupSettings, type Slot } from "@/lib/types";
 
 type SlotDraft = { id?: string; date: string; start: string; end: string; place: string };
 type Draft = {
@@ -16,6 +16,7 @@ type Draft = {
   seats: number | string;
   requirements: string;
   slots: SlotDraft[];
+  followup: FollowupSettings;
 };
 
 const emptyDraft = (): Draft => ({
@@ -26,6 +27,7 @@ const emptyDraft = (): Draft => ({
   seats: 5,
   requirements: "",
   slots: [{ date: "", start: "10:00", end: "17:00", place: "" }],
+  followup: { ...DEFAULT_FOLLOWUP },
 });
 
 function addDays(date: string, n: number) {
@@ -33,6 +35,43 @@ function addDays(date: string, n: number) {
   const d = new Date(date + "T00:00:00Z");
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
+}
+
+function FollowupEditor({ value: f, onChange }: { value: FollowupSettings; onChange: (f: FollowupSettings) => void }) {
+  const { meta } = useAdmin();
+  const set = (p: Partial<FollowupSettings>) => onChange({ ...f, ...p });
+  const preset = [24, 48, 72].includes(Number(f.hours));
+  return (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <div className="card-body stack" style={{ gap: 10 }}>
+        <label className="row strong">
+          <input type="checkbox" checked={f.enabled} onChange={(e) => set({ enabled: e.target.checked })} />
+          무응답 시 다음 순위 위원에게 자동 안내
+        </label>
+        <p className="small muted">초청 메일 발송 후 정한 기간 안에 참석·불참 회신이 없으면, 배석 인원이 부족한 만큼 우선순위 다음 위원을 자동으로 초청합니다. 기존 위원의 초청은 유지되어 늦게라도 회신할 수 있습니다.</p>
+        {f.enabled && (
+          <div className="stack" style={{ gap: 10, paddingLeft: 24 }}>
+            <div className="row">
+              <span className="small">회신 대기 기간</span>
+              {[24, 48, 72].map((h) => (
+                <button key={h} type="button" className={`btn sm ${Number(f.hours) === h ? "primary" : ""}`} onClick={() => set({ hours: h })}>
+                  {h / 24}일({h}시간)
+                </button>
+              ))}
+              <span className="small muted">직접 입력</span>
+              <input className="input" style={{ width: 90 }} type="number" min={1} max={336} value={f.hours} onChange={(e) => set({ hours: e.target.value as unknown as number })} aria-label="회신 대기 시간" />
+              <span className="small">시간 {!preset && f.hours ? `(약 ${(Number(f.hours) / 24).toFixed(1)}일)` : ""}</span>
+            </div>
+            <label className="row small"><input type="checkbox" checked={f.onDecline} onChange={(e) => set({ onDecline: e.target.checked })} /> &lsquo;참석 불가&rsquo; 회신이 오면 기간과 관계없이 바로 다음 순위 위원에게 안내</label>
+            <label className="row small"><input type="checkbox" checked={f.autoSend} onChange={(e) => set({ autoSend: e.target.checked })} /> 초청 메일까지 자동 발송</label>
+            {f.autoSend && !meta?.email.configured && (
+              <div className="notice warn small">이메일 발송 서비스가 설정되지 않아 지금은 다음 순위 위원을 <b>초청 대상에 추가만</b> 하고, ④ 초청 메일 화면에 &lsquo;발송 필요&rsquo;로 표시합니다.</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; onClose: () => void }) {
@@ -48,6 +87,7 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
           seats: initial.seats,
           requirements: initial.requirements,
           slots: initial.slots.map((s: Slot) => ({ ...s })),
+          followup: followupOf(initial),
         }
       : emptyDraft(),
   );
@@ -66,12 +106,16 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
     if (late) return setErr(`회신 기한(${d.deadline}) 이전의 후보 일정이 있습니다: ${late.date}`);
     setBusy(true);
     try {
-      const payload = { ...d, seats: Number(d.seats), slots };
+      const payload = { ...d, seats: Number(d.seats), slots, followup: { ...d.followup, hours: Number(d.followup.hours) } };
+      if (payload.followup.enabled && (!payload.followup.hours || payload.followup.hours < 1)) {
+        setBusy(false);
+        return setErr("자동 후속 안내 기간을 1시간 이상으로 설정해 주세요.");
+      }
       if (initial) {
         // 변경된 항목만 전송
         const changed: Record<string, unknown> = {};
         (Object.keys(payload) as (keyof typeof payload)[]).forEach((k) => {
-          const before = k === "slots" ? initial.slots : initial[k];
+          const before = k === "slots" ? initial.slots : k === "followup" ? followupOf(initial) : initial[k];
           if (JSON.stringify(before) !== JSON.stringify(payload[k])) changed[k] = payload[k];
         });
         if (!Object.keys(changed).length) {
@@ -140,6 +184,7 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
             <textarea className="textarea" value={d.requirements} onChange={(e) => set("requirements", e.target.value)} placeholder="초청 메일과 회신 화면에 표시됩니다." />
           </div>
         </div>
+        <FollowupEditor value={d.followup} onChange={(f) => set("followup", f)} />
         <div>
           <div className="row between" style={{ marginBottom: 8 }}>
             <h3>후보 일정 및 장소</h3>
@@ -187,7 +232,7 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
 }
 
 export default function EvaluationsPage() {
-  const { evaluations, current, setCurrentId, reload, loading } = useAdmin();
+  const { evaluations, current, setCurrentId, reload, checkFollowups, loading } = useAdmin();
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<EvalWithCounts | "new" | null>(null);
@@ -202,6 +247,7 @@ export default function EvaluationsPage() {
       await reload();
       setCurrentId(null);
       toast("가상 데이터를 불러왔습니다.", "ok");
+      checkFollowups(true);
     } catch (e) {
       toast(errMsg(e), "bad");
     } finally {
@@ -274,7 +320,10 @@ export default function EvaluationsPage() {
               <div className="stack" style={{ gap: 6 }}>
                 <div><span className="muted">담당부서</span> {e.department || "-"} {e.contactName && <span className="muted">/ {e.contactName}</span>}</div>
                 <div><span className="muted">회신 기한</span> {formatDateKo(e.deadline)} · <span className="muted">배석 인원</span> {e.seats}명</div>
-                <div className="muted small">후보 일정 {e.slots.length}건</div>
+                <div className="muted small">
+                  후보 일정 {e.slots.length}건 · 자동 후속 안내{" "}
+                  {followupOf(e).enabled ? <span className="badge info">{followupOf(e).hours}시간 무응답 시{followupOf(e).onDecline ? " · 불참 시" : ""}</span> : <span className="badge">꺼짐</span>}
+                </div>
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {e.slots.map((s) => (
                     <li key={s.id} style={e.finalization?.slotId === s.id ? { fontWeight: 700, color: "var(--ok)" } : undefined}>

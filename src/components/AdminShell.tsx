@@ -8,7 +8,7 @@ import { api, ConfirmProvider, ToastProvider } from "./ui";
 import { daysUntil, formatDateKo } from "@/lib/util";
 
 export type Counts = { total: number; notSent: number; waiting: number; yes: number; conditional: number; no: number; withdrawn: number; responded: number };
-export type EvalWithCounts = Evaluation & { counts: Counts };
+export type EvalWithCounts = Evaluation & { counts: Counts; unread: number };
 export type Meta = {
   storage: "redis" | "memory";
   devPassword: boolean;
@@ -21,6 +21,7 @@ type Ctx = {
   current: EvalWithCounts | null;
   setCurrentId: (id: string | null) => void;
   reload: () => Promise<void>;
+  checkFollowups: (force?: boolean) => void;
   meta: Meta | null;
   loading: boolean;
 };
@@ -57,6 +58,7 @@ function Shell({ children }: { children: ReactNode }) {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [storedId, setStoredId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState("");
 
   const reload = useCallback(async () => {
     const [list, m] = await Promise.all([
@@ -71,6 +73,26 @@ function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     reload().catch(() => setLoading(false));
   }, [reload]);
+
+  // 무응답 자동 후속 안내 점검: 스케줄러 외에 관리자 화면을 열 때도 실행 (10분에 한 번)
+  const checkFollowups = useCallback((force = false) => {
+    const KEY = "kiat.followupCheckedAt";
+    const last = Number(sessionStorage.getItem(KEY) || 0);
+    if (!force && Date.now() - last < 10 * 60 * 1000) return;
+    sessionStorage.setItem(KEY, String(Date.now()));
+    api<{ results: { name: string; invited: { name: string; sent: boolean }[] }[] }>("/api/admin/followup", { method: "POST", json: {} })
+      .then((r) => {
+        const n = r.results.reduce((s, x) => s + x.invited.length, 0);
+        if (n) {
+          setNotice(`무응답 자동 후속 안내: ${r.results.map((x) => `${x.name} — ${x.invited.map((i) => `${i.name}${i.sent ? "(메일 발송)" : "(발송 필요)"}`).join(", ")}`).join(" / ")}`);
+          reload();
+        }
+      })
+      .catch(() => {});
+  }, [reload]);
+  useEffect(() => {
+    checkFollowups();
+  }, [checkFollowups]);
 
   // 현재 평가 결정: 사용자가 고른 평가(selectedId) → 없으면 가장 최근 등록 평가
   // selectedId 는 URL(?e=)이 바뀌면 따라가고, 최초 진입 시 URL이 없으면 최근 선택(localStorage)을 사용
@@ -149,7 +171,7 @@ function Shell({ children }: { children: ReactNode }) {
   const dday = current ? daysUntil(current.deadline) : null;
 
   return (
-    <AdminCtx.Provider value={{ evaluations, current, setCurrentId, reload, meta, loading }}>
+    <AdminCtx.Provider value={{ evaluations, current, setCurrentId, reload, checkFollowups, meta, loading }}>
       <div className="shell">
         <aside className="sidebar">
           <div className="brand">
@@ -167,6 +189,11 @@ function Shell({ children }: { children: ReactNode }) {
               </Link>
             );
           })}
+          <div className="nav-label">소통</div>
+          <Link href={"/admin/messages" + q} className={`nav-item ${pathname.startsWith("/admin/messages") ? "active" : ""}`}>
+            <span className="nav-step">✉</span>위원 문의·안내
+            {current?.unread ? <span className="nav-hint" style={{ color: "#fff", background: "var(--bad)", borderRadius: 99, padding: "0 7px" }}>{current.unread}</span> : null}
+          </Link>
           <div className="nav-label">조회</div>
           <Link href={"/admin/calendar" + q} className={`nav-item ${pathname.startsWith("/admin/calendar") ? "active" : ""}`}>
             <span className="nav-step">▦</span>평가 캘린더
@@ -236,6 +263,22 @@ function Shell({ children }: { children: ReactNode }) {
               시연 모드: 데이터가 서버 메모리에만 저장되어 재배포·재시작 시 초기화됩니다. 여러 사용자가 함께 쓰려면 Upstash Redis를 연결하세요.
             </div>
           )}
+          {notice && (
+            <div className="notice ok row between" style={{ borderRadius: 0 }}>
+              <span>{notice}</span>
+              <button className="btn sm ghost" onClick={() => setNotice("")}>닫기</button>
+            </div>
+          )}
+          {(() => {
+            const others = evaluations.filter((e) => e.id !== current?.id && e.unread > 0);
+            return others.length ? (
+              <div className="notice" style={{ borderRadius: 0 }}>
+                다른 평가에 확인하지 않은 위원 문의가 있습니다: {others.map((e) => (
+                  <Link key={e.id} href={`/admin/messages?e=${e.id}`} style={{ marginRight: 10 }}>{e.name} ({e.unread})</Link>
+                ))}
+              </div>
+            ) : null;
+          })()}
           <main className="content">{children}</main>
         </div>
       </div>

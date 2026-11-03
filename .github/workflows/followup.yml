@@ -1,0 +1,23 @@
+name: 무응답 자동 후속 안내 점검
+
+# Vercel Hobby 요금제의 Cron은 하루 1회만 가능하므로, 매시간 점검은 GitHub Actions로 호출한다.
+# 저장소 Settings → Secrets and variables → Actions 에 APP_URL, CRON_SECRET 을 등록하면 동작한다.
+on:
+  schedule:
+    - cron: "17 * * * *" # 매시 17분 (정각 혼잡 회피, UTC 기준이지만 매시간이라 무관)
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 점검 API 호출
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "APP_URL 또는 CRON_SECRET 시크릿이 없어 건너뜁니다."; exit 0
+          fi
+          curl -fsS --max-time 60 -H "Authorization: Bearer $CRON_SECRET" "${APP_URL%/}/api/cron/followup"

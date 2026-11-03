@@ -1,4 +1,4 @@
-import type { EmailTemplate, Evaluation, Evaluator } from "./types";
+import type { EmailTemplate, Evaluation, Evaluator, MailResult } from "./types";
 import { formatDateKo, formatSlot } from "./util";
 
 export const PLACEHOLDERS = [
@@ -96,4 +96,47 @@ export async function sendViaResend(to: string, mail: EmailTemplate): Promise<{ 
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "발송 중 오류가 발생했습니다." };
   }
+}
+
+/**
+ * 공통 발송 함수 — 예외를 던지지 않고 결과만 반환한다.
+ * 발송 서비스 미설정·허용목록 밖 주소는 'skipped' (관리자가 수동 발송하도록 안내)
+ */
+export async function deliver(to: string | null | undefined, mail: EmailTemplate): Promise<MailResult> {
+  const st = emailServiceStatus();
+  if (!to) return { status: "skipped", detail: "이메일 미등록" };
+  if (!st.configured) return { status: "skipped", detail: "발송 서비스 미설정" };
+  if (!recipientAllowed(to, st.allowList)) return { status: "skipped", detail: "발송 허용목록 외 주소" };
+  const r = await sendViaResend(to, mail);
+  return r.ok ? { status: "sent", detail: to } : { status: "failed", detail: r.error };
+}
+
+export function canAutoSend(to: string | null | undefined) {
+  const st = emailServiceStatus();
+  return Boolean(to && st.configured && recipientAllowed(to, st.allowList));
+}
+
+const head = (e: Pick<Evaluation, "department" | "name">) => `${e.department ? `[${e.department}] ` : ""}${e.name}`;
+const sign = (e: Pick<Evaluation, "department" | "contactName">) =>
+  `\n\n${[e.department, e.contactName].filter(Boolean).join(" ") || "평가 운영 담당자"} 드림`;
+
+export function replyMail(e: Evaluation, v: Pick<Evaluator, "name">, body: string, link: string): EmailTemplate {
+  return {
+    subject: `${head(e)} 문의에 대한 답변`,
+    body: `${v.name} 위원님께\n\n문의하신 내용에 대해 아래와 같이 답변드립니다.\n\n${body}\n\n추가 문의나 회신은 아래 개인 링크에서 하실 수 있습니다.\n▶ ${link}${sign(e)}`,
+  };
+}
+
+export function announcementMail(e: Evaluation, v: Pick<Evaluator, "name">, title: string, body: string, link: string): EmailTemplate {
+  return {
+    subject: `${head(e)} 안내: ${title}`,
+    body: `${v.name} 위원님께\n\n「${e.name}」 관련 안내사항을 알려드립니다.\n\n■ ${title}\n${body}\n\n문의·회신: ▶ ${link}${sign(e)}`,
+  };
+}
+
+export function adminNotifyMail(e: Evaluation, v: Pick<Evaluator, "name" | "org">, body: string, adminLink: string): EmailTemplate {
+  return {
+    subject: `[문의 접수] ${e.name} - ${v.name} 위원`,
+    body: `${v.name}(${v.org || "소속 미입력"}) 위원이 문의를 남겼습니다.\n\n${body}\n\n답변하기: ${adminLink}`,
+  };
 }

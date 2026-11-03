@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
 import { api, copyText, errMsg, Modal, useConfirm, useToast } from "@/components/ui";
 import { DEFAULT_TEMPLATE, mailtoUrl, PLACEHOLDERS, renderTemplate } from "@/lib/email";
-import { DISPLAY_STATE_LABEL, inviteDisplayState, type Evaluator, type Invite, type InviteDisplayState } from "@/lib/types";
+import { DISPLAY_STATE_LABEL, followupOf, inviteDisplayState, type Evaluator, type Invite, type InviteDisplayState } from "@/lib/types";
 import { formatDateTime } from "@/lib/util";
 
 const STATE_CLS: Record<InviteDisplayState, string> = {
@@ -205,8 +205,63 @@ function InviteDialog({
   );
 }
 
+function timeLeft(inv: Invite, hours: number, now: number) {
+  if (inv.status !== "sent" || inv.response || !inv.sentAt) return null;
+  const ms = new Date(inv.sentAt).getTime() + hours * 3600 * 1000 - now;
+  if (ms <= 0) return { overdue: true, label: "회신 기한 경과" };
+  const h = Math.floor(ms / 3600000);
+  return { overdue: false, label: h >= 1 ? `자동 후속까지 ${h}시간` : `자동 후속까지 ${Math.max(1, Math.round(ms / 60000))}분` };
+}
+
+function FollowupBanner({ evaluation, onRan }: { evaluation: EvalWithCounts; onRan: () => void }) {
+  const { meta } = useAdmin();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const f = followupOf(evaluation);
+  if (evaluation.status === "finalized") return null;
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await api<{ results: { invited: { name: string; sent: boolean; detail?: string }[]; note?: string }[] }>("/api/admin/followup", {
+        method: "POST",
+        json: { evaluationId: evaluation.id },
+      });
+      const res = r.results[0];
+      if (!res) toast("지금 처리할 무응답·불참 위원이 없습니다.", "info");
+      else if (res.invited.length) toast(`다음 순위 ${res.invited.length}명 안내: ${res.invited.map((i) => `${i.name}${i.sent ? "(메일 발송)" : "(발송 필요)"}`).join(", ")}`, "ok");
+      else toast(res.note ?? "처리했습니다.", "info");
+      onRan();
+    } catch (e) {
+      toast(errMsg(e), "bad");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className={`notice ${f.enabled ? "" : "warn"} row between`}>
+      <span>
+        {f.enabled ? (
+          <>
+            <b>자동 후속 안내 사용 중</b> — 발송 후 <b>{f.hours}시간</b> 안에 회신이 없으면{f.onDecline ? " (또는 참석 불가 회신 시)" : ""} 다음 순위 위원을 자동 초청
+            {f.autoSend ? (meta?.email.configured ? "하고 메일을 발송합니다." : "합니다. (발송 서비스 미설정 → 초청 대상만 추가, 발송은 수동)") : "합니다. (메일은 수동 발송)"}
+          </>
+        ) : (
+          <>자동 후속 안내가 꺼져 있습니다. ① 평가 일정 등록 → 수정에서 평가별로 설정할 수 있습니다.</>
+        )}
+      </span>
+      {f.enabled && <button className="btn sm" disabled={busy} onClick={run}>{busy ? "점검 중…" : "지금 점검"}</button>}
+    </div>
+  );
+}
+
 function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
   const { reload: reloadShell } = useAdmin();
+  const fu = followupOf(evaluation);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
   const toast = useToast();
   const confirm = useConfirm();
   const { invites, byId, reload, ready } = useEvalData(evaluation.id);
@@ -275,6 +330,8 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
         </div>
       </div>
 
+      <FollowupBanner evaluation={evaluation} onRan={refresh} />
+
       {showTpl && (
         <div className="card">
           <div className="card-head"><h2>초청 메일 양식</h2><span className="small muted">평가별로 저장됩니다</span></div>
@@ -337,7 +394,16 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
                       <td className="strong nowrap">{v?.name ?? "(삭제됨)"}</td>
                       <td>{v?.org}</td>
                       <td className="small">{v?.email || <span className="badge bad">미등록</span>}</td>
-                      <td><span className={`badge ${STATE_CLS[st]}`}>{DISPLAY_STATE_LABEL[st]}</span></td>
+                      <td>
+                        <span className={`badge ${STATE_CLS[st]}`}>{DISPLAY_STATE_LABEL[st]}</span>
+                        {inv.autoInvited && <span className="badge dark" style={{ marginLeft: 4 }} title="무응답·불참에 따른 자동 후속 안내로 추가">자동</span>}
+                        {(() => {
+                          if (inv.escalatedAt && !inv.response) return <div className="small" style={{ color: "var(--bad)" }}>무응답 → 다음 순위 안내됨</div>;
+                          if (inv.escalatedAt && inv.response?.attendance === "no") return <div className="small faint">다음 순위 안내됨</div>;
+                          const tl = fu.enabled && evaluation.status !== "finalized" ? timeLeft(inv, fu.hours, now) : null;
+                          return tl ? <div className="small" style={{ color: tl.overdue ? "var(--bad)" : "var(--muted)" }}>{tl.label}</div> : null;
+                        })()}
+                      </td>
                       <td className="small nowrap">{inv.sentAt ? `${formatDateTime(inv.sentAt)}${inv.sentVia === "email" ? " (자동)" : ""}` : "-"}</td>
                       <td className="small muted">{inv.log[0]?.action}</td>
                       <td className="nowrap">

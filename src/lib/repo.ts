@@ -1,5 +1,5 @@
 import { kv } from "./store";
-import type { Attendance, Evaluation, Evaluator, Invite, Slot } from "./types";
+import { DEFAULT_FOLLOWUP, type Attendance, type Evaluation, type Evaluator, type Invite, type Slot } from "./types";
 import { DEFAULT_TEMPLATE } from "./email";
 import { newId, newToken, normalizeEmail, normalizeKey, nowIso } from "./util";
 import type { z } from "zod";
@@ -15,7 +15,7 @@ export class AppError extends Error {
   }
 }
 
-const K = {
+export const K = {
   evals: "evaluations",
   eval: (id: string) => `evaluation:${id}`,
   evaluators: "evaluators",
@@ -24,6 +24,9 @@ const K = {
   invite: (evalId: string, evaluatorId: string) => `invite:${evalId}:${evaluatorId}`,
   token: (t: string) => `token:${t}`,
   evaluatorInvites: (evaluatorId: string) => `evaluatorInvites:${evaluatorId}`,
+  threads: (evalId: string) => `threads:${evalId}`,
+  thread: (evalId: string, evaluatorId: string) => `thread:${evalId}:${evaluatorId}`,
+  announcements: (evalId: string) => `announcements:${evalId}`,
 };
 
 type Versioned = { version: number; updatedAt: string };
@@ -46,7 +49,7 @@ async function updateWithVersion<T extends Versioned>(key: string, expected: num
 }
 
 /** 서버 내부 갱신 — 충돌 시 최신 값으로 재시도 */
-async function updateWithRetry<T extends Versioned>(key: string, mutate: (cur: T) => T, label: string) {
+export async function updateWithRetry<T extends Versioned>(key: string, mutate: (cur: T) => T, label: string) {
   const store = kv();
   for (let attempt = 0; attempt < 6; attempt++) {
     const cur = await store.get<T>(key);
@@ -105,6 +108,7 @@ export async function createEvaluation(input: EvaluationInput): Promise<Evaluati
     slots: normalizeSlots(input.slots),
     historyWeight: input.historyWeight,
     emailTemplate: input.emailTemplate ?? DEFAULT_TEMPLATE,
+    followup: input.followup ?? { ...DEFAULT_FOLLOWUP },
     status: "draft",
     finalization: null,
     createdAt: now,
@@ -153,9 +157,13 @@ export async function updateEvaluation(id: string, patch: Partial<EvaluationInpu
 export async function deleteEvaluation(id: string) {
   const store = kv();
   const invites = await listInvites(id);
+  const threadIds = await store.smembers(K.threads(id));
   await store.del(
     K.eval(id),
     K.invites(id),
+    K.threads(id),
+    K.announcements(id),
+    ...threadIds.map((v) => K.thread(id, v)),
     ...invites.map((i) => K.invite(id, i.evaluatorId)),
     ...invites.map((i) => K.token(i.token)),
   );
@@ -319,7 +327,7 @@ function assertNotFinalized(e: Evaluation) {
   if (e.status === "finalized") throw new AppError(423, "최종 확정된 평가는 초청 정보를 변경할 수 없습니다.");
 }
 
-export async function createInvites(evalId: string, evaluatorIds: string[]) {
+export async function createInvites(evalId: string, evaluatorIds: string[], opts: { logNote?: string; auto?: boolean } = {}) {
   const store = kv();
   const evaluation = await getEvaluation(evalId);
   assertNotFinalized(evaluation);
@@ -340,7 +348,9 @@ export async function createInvites(evalId: string, evaluatorIds: string[]) {
       sentVia: null,
       withdrawnReason: "",
       response: null,
-      log: [{ at: now, action: `${round}차 초청 대상으로 선정` }],
+      log: [{ at: now, action: `${round}차 초청 대상으로 선정${opts.logNote ? ` (${opts.logNote})` : ""}` }],
+      escalatedAt: null,
+      autoInvited: Boolean(opts.auto),
       createdAt: now,
       updatedAt: now,
       version: 1,
@@ -411,6 +421,15 @@ export async function applyInviteAction(evalId: string, evaluatorId: string, act
           };
       }
     },
+    "초청",
+  );
+}
+
+/** 무응답·불참 위원에 대해 다음 순위 안내 처리를 기록 (중복 처리 방지) */
+export async function markEscalated(evalId: string, evaluatorId: string, note: string) {
+  return updateWithRetry<Invite>(
+    K.invite(evalId, evaluatorId),
+    (inv) => (inv.escalatedAt ? inv : { ...inv, escalatedAt: nowIso(), log: pushLog(inv, note) }),
     "초청",
   );
 }

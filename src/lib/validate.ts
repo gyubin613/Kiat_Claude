@@ -24,6 +24,12 @@ const evaluationBase = {
   slots: z.array(slotInput).max(30),
   historyWeight: z.coerce.number().min(0).max(100),
   emailTemplate: z.object({ subject: text(200).min(1, "메일 제목을 입력해 주세요."), body: text(5000).min(1, "메일 본문을 입력해 주세요.") }),
+  followup: z.object({
+    enabled: z.boolean(),
+    hours: z.coerce.number().int().min(1, "1시간 이상으로 설정해 주세요.").max(336, "최대 14일(336시간)까지 설정할 수 있습니다."),
+    onDecline: z.boolean(),
+    autoSend: z.boolean(),
+  }),
 };
 
 export const evaluationInput = z.object({
@@ -34,6 +40,7 @@ export const evaluationInput = z.object({
   slots: evaluationBase.slots.default([]),
   historyWeight: evaluationBase.historyWeight.default(50),
   emailTemplate: evaluationBase.emailTemplate.optional(),
+  followup: evaluationBase.followup.optional(),
 });
 
 /** 부분 수정: 기본값을 적용하지 않음 (보내지 않은 항목은 기존 값 유지) */
@@ -118,3 +125,16 @@ export function firstError(err: z.ZodError): string {
   const issue = err.issues[0];
   return issue?.message ?? "입력값을 확인해 주세요.";
 }
+
+export const messageInput = z.object({
+  body: z.string().trim().min(1, "내용을 입력해 주세요.").max(2000, "2000자 이내로 입력해 주세요."),
+});
+
+export const adminMessageInput = messageInput.extend({ sendEmail: z.boolean().default(true) });
+
+export const announcementInput = z.object({
+  title: z.string().trim().min(1, "제목을 입력해 주세요.").max(120),
+  body: z.string().trim().min(1, "내용을 입력해 주세요.").max(5000),
+  audience: z.enum(["all", "waiting", "attending"]),
+  sendEmail: z.boolean().default(true),
+});

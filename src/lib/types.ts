@@ -32,6 +32,20 @@ export type Finalization = {
 
 export type EvaluationStatus = "draft" | "inviting" | "finalized";
 
+/** 무응답 자동 후속 안내 설정 (평가별) */
+export type FollowupSettings = {
+  enabled: boolean;
+  hours: number; // 초청 발송 후 이 시간 안에 회신이 없으면 다음 순위 위원에게 안내
+  onDecline: boolean; // '참석 불가' 회신 시에도 다음 순위 위원에게 자동 안내
+  autoSend: boolean; // 이메일 발송 서비스가 설정된 경우 자동 발송 (아니면 초청 대상만 추가)
+};
+
+export const DEFAULT_FOLLOWUP: FollowupSettings = { enabled: false, hours: 48, onDecline: false, autoSend: true };
+
+export function followupOf(e: Pick<Evaluation, "followup">): FollowupSettings {
+  return { ...DEFAULT_FOLLOWUP, ...(e.followup ?? {}) };
+}
+
 export type Evaluation = {
   id: string;
   name: string;
@@ -43,6 +57,7 @@ export type Evaluation = {
   slots: Slot[];
   historyWeight: number; // 0~100, 우선순위 산출 시 과거 이력 가중치 (나머지는 관리자 선호도)
   emailTemplate: EmailTemplate;
+  followup?: FollowupSettings; // 이전 데이터 호환을 위해 선택 항목 (followupOf()로 읽기)
   status: EvaluationStatus;
   finalization: Finalization | null;
   createdAt: string;
@@ -90,6 +105,8 @@ export type Invite = {
   withdrawnReason: string;
   response: InviteResponse | null;
   log: { at: string; action: string }[]; // 발송·회신·철회 이력 (최근 30건)
+  escalatedAt?: string | null; // 무응답·불참으로 다음 순위 자동 안내가 처리된 시각
+  autoInvited?: boolean; // 자동 후속 안내로 추가된 초청
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -125,3 +142,49 @@ export const ATTENDANCE_LABEL: Record<Attendance, string> = {
   conditional: "조건부 참석 가능",
   no: "참석 불가",
 };
+
+// ---------------- 위원 소통 ----------------
+
+export type MailResult = { status: "sent" | "failed" | "skipped"; detail?: string };
+
+export type Message = {
+  id: string;
+  from: "evaluator" | "admin";
+  body: string;
+  at: string;
+  email?: MailResult; // 관리자 답변의 메일 발송 결과
+};
+
+/** 평가 × 위원 1:1 문의 스레드 */
+export type Thread = {
+  evaluationId: string;
+  evaluatorId: string;
+  messages: Message[];
+  unreadAdmin: number; // 관리자가 읽지 않은 위원 메시지 수
+  unreadEvaluator: number; // 위원이 읽지 않은 관리자 메시지 수
+  lastAt: string;
+  createdAt: string;
+  updatedAt: string;
+  version: number;
+};
+
+export type AnnouncementAudience = "all" | "waiting" | "attending";
+
+export const AUDIENCE_LABEL: Record<AnnouncementAudience, string> = {
+  all: "초청 위원 전체",
+  waiting: "회신 대기 위원",
+  attending: "참석 가능 회신 위원",
+};
+
+export type Announcement = {
+  id: string;
+  title: string;
+  body: string;
+  audience: AnnouncementAudience;
+  recipientIds: string[];
+  at: string;
+  sendEmail: boolean;
+  result: { sent: number; failed: number; skipped: number };
+};
+
+export type AnnouncementDoc = { items: Announcement[]; createdAt: string; updatedAt: string; version: number };

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { body, handle, json } from "@/lib/api";
+import { baseUrl, body, handle, json } from "@/lib/api";
 import { resetAll } from "@/lib/repo";
 import { seedDemoData } from "@/lib/seed";
 
@@ -10,5 +10,5 @@ export const POST = handle(async (req: Request) => {
     await resetAll();
     return json({ ok: true });
   }
-  return json({ ok: true, ...(await seedDemoData()) });
+  return json({ ok: true, ...(await seedDemoData(baseUrl(req))) });
 });
