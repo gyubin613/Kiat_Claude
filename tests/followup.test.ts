@@ -16,7 +16,7 @@ async function setup(opts: { onDecline?: boolean; seats?: number } = {}) {
   const vs = [];
   // 선호도가 높은 순서대로 v0 > v1 > ... (우선순위 순서 고정)
   for (let i = 0; i < 6; i++)
-    vs.push(await createEvaluator(evaluatorInput.parse({ name: `위원${i}`, org: "가상", email: `v${i}@example.com`, preference: 5 - Math.min(i, 4) })));
+    vs.push(await createEvaluator(e.id, evaluatorInput.parse({ name: `위원${i}`, org: "가상", email: `v${i}@example.com`, preference: 5 - Math.min(i, 4) })));
   await createInvites(e.id, [vs[0].id, vs[1].id]);
   for (const v of [vs[0], vs[1]]) await applyInviteAction(e.id, v.id, { type: "markSent", via: "manual" });
   return { e: await getEvaluation(e.id), vs };

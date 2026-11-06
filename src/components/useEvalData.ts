@@ -15,7 +15,7 @@ export function useEvalData(evalId: string | undefined, opts: { pollMs?: number 
     try {
       const [a, b] = await Promise.all([
         api<{ invites: Invite[] }>(`/api/admin/evaluations/${evalId}/invites`),
-        api<{ evaluators: Evaluator[] }>("/api/admin/evaluators"),
+        api<{ evaluators: Evaluator[] }>(`/api/admin/evaluations/${evalId}/evaluators`),
       ]);
       setInvites(a.invites);
       setEvaluators(b.evaluators);

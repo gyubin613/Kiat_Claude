@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useAdmin, type EvalWithCounts } from "./AdminShell";
+import type { EvalWithCounts } from "./AdminShell";
 import { followupOf } from "@/lib/types";
 import { daysUntil, formatDateKo, formatSlot } from "@/lib/util";
 
@@ -9,7 +9,6 @@ type Todo = { tone: "bad" | "warn" | "info"; text: string; href: string; go: str
 
 /** 현재 평가에서 지금 처리해야 할 일만 모아 보여주는 첫 화면 */
 export default function Today({ evaluation: e }: { evaluation: EvalWithCounts }) {
-  const { meta } = useAdmin();
   const c = e.counts;
   const q = `?e=${e.id}`;
   const active = c.total - c.withdrawn;
@@ -21,11 +20,12 @@ export default function Today({ evaluation: e }: { evaluation: EvalWithCounts })
   const todos: Todo[] = [];
   if (e.status !== "finalized") {
     if (!e.slots.length) todos.push({ tone: "warn", text: "후보 일정을 등록해 주세요.", href: `/admin${q}`, go: "평가 수정" });
-    if (!meta?.evaluatorCount) todos.push({ tone: "warn", text: "평가위원 명단이 비어 있습니다.", href: `/admin/evaluators${q}`, go: "명단 등록" });
+    if (!e.rosterCount)
+      todos.push({ tone: "warn", text: "이 평가의 위원 명단이 비어 있습니다. 이전 평가에서 불러오거나 엑셀로 올려 주세요.", href: `/admin/evaluators${q}`, go: "명단 만들기" });
     if (e.unread) todos.push({ tone: "bad", text: `새 위원 문의 ${e.unread}건에 답변이 필요합니다.`, href: `/admin/messages${q}`, go: "답변하기" });
     if (c.condPending) todos.push({ tone: "bad", text: `조건부 참석 문의 ${c.condPending}건에 답변하고 수락 여부를 정해 주세요.`, href: `/admin/responses${q}`, go: "답변하기" });
     if (c.notSent) todos.push({ tone: "warn", text: `초청 메일을 보내지 않은 위원이 ${c.notSent}명 있습니다.`, href: `/admin/invites${q}`, go: "메일 보내기" });
-    if (active - c.no < e.seats && meta?.evaluatorCount)
+    if (active - c.no < e.seats && e.rosterCount)
       todos.push({ tone: "warn", text: `배석 ${e.seats}명 대비 초청 인원이 ${e.seats - (active - c.no)}명 부족합니다.`, href: `/admin/priority${q}`, go: "추가 섭외" });
     if (e.overdue)
       todos.push({

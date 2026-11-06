@@ -19,7 +19,7 @@ async function setup() {
     historyWeight: 50,
   });
   const vs = [];
-  for (let i = 0; i < 4; i++) vs.push(await createEvaluator(evInput(`위원${i}`, `v${i}@example.com`)));
+  for (let i = 0; i < 4; i++) vs.push(await createEvaluator(e.id, evInput(`위원${i}`, `v${i}@example.com`)));
   return { e, vs };
 }
 
@@ -27,22 +27,26 @@ describe("업무 시나리오", () => {
   beforeEach(() => __resetKvForTests());
 
   it("중복 등록 확인 (이메일, 성명+소속)", async () => {
-    await createEvaluator(evInput("홍길동", "a@example.com"));
-    await expect(createEvaluator(evInput("다른이름", "A@example.com "))).rejects.toThrow(/같은 이메일/);
-    await expect(createEvaluator(evInput("홍길동"))).rejects.toThrow(/같은 성명·소속/);
+    const { e } = await setup();
+    await createEvaluator(e.id, evInput("홍길동", "a@example.com"));
+    await expect(createEvaluator(e.id, evInput("다른이름", "A@example.com "))).rejects.toThrow(/같은 이메일/);
+    await expect(createEvaluator(e.id, evInput("홍길동"))).rejects.toThrow(/같은 성명·소속/);
   });
 
   it("개별 수정은 변경 항목만 반영하고 동시 수정은 충돌로 처리", async () => {
-    const v = await createEvaluator(evaluatorInput.parse({ name: "김", org: "X", phone: "010", note: "메모" }));
-    const v2 = await updateEvaluator(v.id, { phone: "011" }, v.version);
+    const { e } = await setup();
+    const v = await createEvaluator(e.id, evaluatorInput.parse({ name: "김", org: "X", phone: "010", note: "메모" }));
+    const v2 = await updateEvaluator(e.id, v.id, { phone: "011" }, v.version);
     expect(v2.note).toBe("메모");
     expect(v2.phone).toBe("011");
-    await expect(updateEvaluator(v.id, { note: "덮어쓰기" }, v.version)).rejects.toMatchObject({ status: 409 });
+    await expect(updateEvaluator(e.id, v.id, { note: "덮어쓰기" }, v.version)).rejects.toMatchObject({ status: 409 });
   });
 
   it("엑셀 등록: 빈 항목만 보완 모드", async () => {
-    await createEvaluator(evaluatorInput.parse({ name: "이", org: "Y", email: "lee@example.com" }));
+    const { e } = await setup();
+    await createEvaluator(e.id, evaluatorInput.parse({ name: "이", org: "Y", email: "lee@example.com" }));
     const res = await importEvaluators(
+      e.id,
       [
         { row: 2, data: evaluatorInput.parse({ name: "이", org: "Y", email: "lee@example.com", phone: "010-9" }) },
         { row: 3, data: evInput("신규") },
@@ -97,7 +101,7 @@ describe("업무 시나리오", () => {
     await expect(createInvites(e.id, [vs[3].id])).rejects.toMatchObject({ status: 423 });
 
     // 기본정보 정정은 가능하며 확정 결과(스냅샷)는 유지
-    await updateEvaluator(vs[0].id, { name: "위원0-정정" }, vs[0].version);
+    await updateEvaluator(e.id, vs[0].id, { name: "위원0-정정" }, vs[0].version);
     expect((await getEvaluation(e.id)).finalization?.members[0].name).toBe("위원0");
   });
 

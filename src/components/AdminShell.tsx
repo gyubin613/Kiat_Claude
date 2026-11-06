@@ -8,11 +8,10 @@ import { api, ConfirmProvider, ToastProvider } from "./ui";
 import { daysUntil, formatDateKo } from "@/lib/util";
 
 export type Counts = { total: number; notSent: number; waiting: number; yes: number; conditional: number; condPending: number; no: number; withdrawn: number; responded: number };
-export type EvalWithCounts = Evaluation & { counts: Counts; unread: number; questionsWaiting: number; overdue: number };
+export type EvalWithCounts = Evaluation & { counts: Counts; unread: number; questionsWaiting: number; overdue: number; rosterCount: number };
 export type Meta = {
   storage: "redis" | "memory";
   devPassword: boolean;
-  evaluatorCount: number;
   email: { configured: boolean; from: string | null; allowList: string[] };
 };
 
@@ -116,12 +115,14 @@ function Shell({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!currentId) return;
     localStorage.setItem(LS_KEY, currentId);
-    if (urlId !== currentId) {
+    // 주소에 유효한 평가가 있으면 그 평가로 이동하는 중이므로 덮어쓰지 않는다 (위 효과에서 선택이 따라감)
+    const urlValid = !!urlId && evaluations.some((e) => e.id === urlId);
+    if (!urlValid && urlId !== currentId) {
       const p = new URLSearchParams(search.toString());
       p.set("e", currentId);
       router.replace(`${pathname}?${p.toString()}`, { scroll: false });
     }
-  }, [currentId, urlId, pathname, router, search]);
+  }, [currentId, urlId, pathname, router, search, evaluations]);
 
   const setCurrentId = useCallback(
     (id: string | null) => {
@@ -144,7 +145,7 @@ function Shell({ children }: { children: ReactNode }) {
     const c = current.counts;
     switch (step) {
       case 1: return current.slots.length > 0;
-      case 2: return (meta?.evaluatorCount ?? 0) > 0;
+      case 2: return current.rosterCount > 0;
       case 3: return c.total - c.withdrawn >= current.seats;
       case 4: return c.total > 0 && c.notSent === 0;
       case 5: return c.total > 0 && c.waiting === 0 && c.notSent === 0;

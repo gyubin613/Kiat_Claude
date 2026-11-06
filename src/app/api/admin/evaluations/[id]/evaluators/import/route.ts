@@ -5,7 +5,11 @@ import { AppError, findDuplicate, importEvaluators, listEvaluators, type ImportM
 export const runtime = "nodejs";
 
 /** dryRun=1 이면 미리보기(검증·중복 확인)만, 아니면 실제 등록 */
-export const POST = handle(async (req: Request) => {
+type Ctx = { params: Promise<{ id: string }> };
+
+/** 이 평가 명단에 엑셀로 추가·갱신 */
+export const POST = handle(async (req: Request, { params }: Ctx) => {
+  const { id } = await params;
   const form = await req.formData().catch(() => null);
   const file = form?.get("file");
   if (!(file instanceof File)) throw new AppError(400, "엑셀 파일을 선택해 주세요.");
@@ -21,7 +25,7 @@ export const POST = handle(async (req: Request) => {
     throw new AppError(400, e instanceof Error ? e.message : "파일을 읽지 못했습니다.");
   }
   if (dryRun) {
-    const all = await listEvaluators();
+    const all = await listEvaluators(id);
     // 파일 내부 중복도 확인
     const seen: { name: string; org: string; email: string; id: string }[] = [];
     const preview = parsed.rows.map((r) => {
@@ -41,7 +45,7 @@ export const POST = handle(async (req: Request) => {
     return json({ preview, unmatchedHeaders: parsed.unmatchedHeaders });
   }
   const valid = parsed.rows.filter((r) => r.ok && r.data).map((r) => ({ row: r.row, data: r.data! }));
-  const results = await importEvaluators(valid, mode);
+  const results = await importEvaluators(id, valid, mode);
   const invalid = parsed.rows.filter((r) => !r.ok).map((r) => ({ row: r.row, name: r.raw.name ?? "", result: "error" as const, message: r.errors.join(", ") }));
   return json({ results: [...results, ...invalid].sort((a, b) => a.row - b.row) });
 });

@@ -90,7 +90,7 @@ const errors = [];
   step("개별 정보 수정(변경 항목만 저장)");
 
   // 엑셀 일괄 등록
-  await page.click("button:has-text('엑셀 일괄 등록')");
+  await page.click("button:has-text('엑셀로 추가·업데이트')");
   await page.setInputFiles("input[type=file]", fixture);
   await page.click(".modal button:has-text('내용 확인')");
   await page.waitForSelector(".modal >> text=이메일 중복");
@@ -274,6 +274,51 @@ const errors = [];
   const ar = await anon.request.get(BASE + "/api/admin/evaluators");
   if (ar.status() !== 401) throw new Error("비로그인 API 접근이 차단되지 않음");
   step("비로그인 관리자 API 차단(401)");
+
+  // 평가별 위원 명단: 새 평가 등록 시 '이전 평가에서 불러오기 → 선택'
+  await page.click("a.nav-item:has-text('평가 등록')");
+  await page.click("button:has-text('새 평가 등록')");
+  await page.fill(".modal input[placeholder^='예) 2026년']", "E2E 명단 불러오기 평가");
+  await page.locator(".modal input[type=date]").first().fill("2030-01-01");
+  await page.fill(".modal input[aria-label='1번 일정 날짜']", "2030-01-10");
+  await page.click(".modal button[role=radio]:has-text('이전 평가에서 불러오기')");
+  const srcSel = page.locator(".modal select[aria-label='불러올 평가']");
+  const srcOpts = await srcSel.locator("option").evaluateAll((os) => os.map((o) => [o.value, o.text]));
+  await srcSel.selectOption(srcOpts.find((o) => o[1].includes("신규과제"))[0]);
+  await page.click(".modal button[role=radio]:has-text('선택')");
+  await page.click(".modal-foot button:has-text('저장')");
+  await page.waitForURL(/\/admin\/evaluators\?e=.*load=.*mode=pick/);
+  await page.waitForSelector(".modal >> text=이전 평가에서 위원 불러오기");
+  await page.waitForSelector(".modal select#copy-from option:has-text('신규과제')", { state: "attached" });
+  await page.waitForSelector(".modal tbody input[type=checkbox]");
+  const curName = await page.locator("select[aria-label='현재 작업 중인 평가']").evaluate((s) => s.options[s.selectedIndex].text);
+  if (!curName.includes("E2E 명단 불러오기 평가")) throw new Error("새로 등록한 평가로 전환되지 않음: " + curName);
+  if (!(await page.locator(".modal select#copy-from").evaluate((s) => s.options[s.selectedIndex].text)).includes("신규과제"))
+    throw new Error("양식에서 고른 원본 평가가 선택되지 않음");
+  await page.locator(".modal tbody input[type=checkbox]").nth(0).check();
+  await page.locator(".modal tbody input[type=checkbox]").nth(1).check();
+  await shot("13-roster-pick");
+  await page.click(".modal-foot button:has-text('선택한 2명 불러오기')");
+  await page.waitForSelector(".modal td .badge:has-text('불러옴')");
+  await page.click(".modal-foot button:has-text('닫기')");
+  if ((await page.locator("table.table tbody tr").count()) !== 2) throw new Error("선택한 2명만 명단에 있어야 함");
+  step("새 평가 등록 → 이전 평가에서 선택 불러오기 (2명)");
+
+  await page.click("button:has-text('이전 평가에서 불러오기')");
+  const srcSel2 = page.locator(".modal select#copy-from");
+  await page.waitForSelector(".modal select#copy-from option:has-text('지역혁신')", { state: "attached" });
+  const opts2 = await srcSel2.locator("option").evaluateAll((os) => os.map((o) => [o.value, o.text]));
+  await srcSel2.selectOption(opts2.find((o) => o[1].includes("지역혁신"))[0]);
+  await page.waitForSelector(".modal tbody tr");
+  await page.click(".modal-foot button:has-text('명 모두 불러오기')");
+  await page.waitForSelector(".modal td .badge:has-text('불러옴')");
+  await page.click(".modal-foot button:has-text('닫기')");
+  const n = await page.locator("table.table tbody tr").count();
+  if (n <= 2) throw new Error("일괄 불러오기 후 명단이 늘어나야 함");
+  const [rdl] = await Promise.all([page.waitForEvent("download"), page.click("button:has-text('엑셀 다운로드')")]);
+  await rdl.saveAs(path.join(OUT, "roster.xlsx"));
+  await shot("14-roster");
+  step(`이전 평가에서 일괄 불러오기 (명단 ${n}명) · 명단 엑셀 다운로드`);
 
   await page.click("a.nav-item:has-text('평가 캘린더')");
   await page.waitForSelector(".cal");

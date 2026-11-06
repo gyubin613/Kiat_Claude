@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { STATUS_BADGE, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { RowMenu } from "@/components/ui";
 import Today from "@/components/Today";
@@ -77,8 +78,43 @@ function FollowupEditor({ value: f, onChange }: { value: FollowupSettings; onCha
   );
 }
 
+type RosterChoice = { how: "new" | "copy"; from: string; mode: "all" | "pick" };
+
+function RosterOption({ value: r, onChange }: { value: RosterChoice; onChange: (r: RosterChoice) => void }) {
+  const { evaluations } = useAdmin();
+  const sources = evaluations.filter((e) => e.rosterCount > 0);
+  return (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <div className="card-body stack" style={{ gap: 10 }}>
+        <h3>평가위원 명단</h3>
+        <p className="small muted">평가마다 명단을 따로 둡니다. 새로 올리거나, 이전 평가의 명단을 불러와 쓸 수 있습니다.</p>
+        <div className="seg" role="radiogroup" aria-label="평가위원 명단 준비 방법">
+          <button type="button" className={r.how === "new" ? "on" : ""} onClick={() => onChange({ ...r, how: "new" })} role="radio" aria-checked={r.how === "new"}>새로 올리기 (엑셀·직접 입력)</button>
+          <button type="button" className={r.how === "copy" ? "on" : ""} disabled={!sources.length} onClick={() => onChange({ ...r, how: "copy", from: r.from || sources[0]?.id || "" })} role="radio" aria-checked={r.how === "copy"}>이전 평가에서 불러오기</button>
+        </div>
+        {r.how === "copy" && (
+          <div className="row">
+            <select className="select" style={{ flex: 1, minWidth: 240 }} value={r.from} onChange={(e) => onChange({ ...r, from: e.target.value })} aria-label="불러올 평가">
+              {sources.map((e) => (
+                <option key={e.id} value={e.id}>{e.name} ({e.rosterCount}명)</option>
+              ))}
+            </select>
+            <div className="seg" role="radiogroup" aria-label="불러오기 방식">
+              <button type="button" className={r.mode === "all" ? "on" : ""} onClick={() => onChange({ ...r, mode: "all" })} role="radio" aria-checked={r.mode === "all"}>일괄</button>
+              <button type="button" className={r.mode === "pick" ? "on" : ""} onClick={() => onChange({ ...r, mode: "pick" })} role="radio" aria-checked={r.mode === "pick"}>선택</button>
+            </div>
+          </div>
+        )}
+        {r.how === "copy" && <span className="hint small muted">{r.mode === "all" ? "등록과 함께 전체 위원을 불러옵니다. 이전 평가 참여 결과는 과거 이력에 반영됩니다." : "등록 후 위원 목록에서 불러올 위원을 체크해 고릅니다."}</span>}
+      </div>
+    </div>
+  );
+}
+
 function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; onClose: () => void }) {
-  const { reload, setCurrentId } = useAdmin();
+  const { reload } = useAdmin();
+  const router = useRouter();
+  const [roster, setRoster] = useState<RosterChoice>({ how: "new", from: "", mode: "all" });
   const toast = useToast();
   const [d, setD] = useState<Draft>(() =>
     initial
@@ -138,9 +174,21 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
         await reload();
       } else {
         const res = await api<{ evaluation: { id: string } }>("/api/admin/evaluations", { method: "POST", json: payload });
+        const id = res.evaluation.id;
+        let q = "";
+        if (roster.how === "copy" && roster.from && roster.mode === "all") {
+          const c = await api<{ results: { result: string }[] }>(`/api/admin/evaluations/${id}/evaluators/copy`, {
+            method: "POST",
+            json: { from: roster.from, ids: null, applyHistory: true },
+          });
+          toast(`새 평가를 등록하고 위원 ${c.results.filter((x) => x.result === "created").length}명을 불러왔습니다.`, "ok");
+        } else if (roster.how === "copy" && roster.from) {
+          q = `&load=${roster.from}&mode=pick`;
+          toast("새 평가를 등록했습니다. 불러올 위원을 골라 주세요.", "ok");
+        } else toast("새 평가를 등록했습니다. 위원 명단을 올려 주세요.", "ok");
         await reload();
-        setCurrentId(res.evaluation.id);
-        toast("새 평가를 등록했습니다. 다음 단계에서 평가위원 명단을 확인하세요.", "ok");
+        // 주소의 ?e= 로 현재 평가가 바뀌므로 setCurrentId 대신 한 번만 이동 (중복 주소 변경으로 이동이 덮이는 것 방지)
+        router.push(`/admin/evaluators?e=${id}${q}`);
       }
       onClose();
     } catch (e) {
@@ -200,6 +248,7 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
             <textarea className="textarea" value={d.requirements} onChange={(e) => set("requirements", e.target.value)} placeholder="초청 메일과 회신 화면에 표시됩니다." />
           </div>
         </div>
+        {!initial && <RosterOption value={roster} onChange={setRoster} />}
         <FollowupEditor value={d.followup} onChange={(f) => set("followup", f)} />
         <div>
           <div className="row between" style={{ marginBottom: 8 }}>
@@ -327,7 +376,7 @@ export default function EvaluationsPage() {
                     <td>
                       <div className="who">
                         <b>{e.name}</b>
-                        <span>{[e.department, e.contactName].filter(Boolean).join(" ")} · 후보 일정 {e.slots.length}건</span>
+                        <span>{[e.department, e.contactName].filter(Boolean).join(" ")} · 후보 일정 {e.slots.length}건 · 위원 명단 {e.rosterCount}명</span>
                       </div>
                     </td>
                     <td><span className={`badge ${STATUS_BADGE[e.status].cls}`}>{STATUS_BADGE[e.status].label}</span></td>
