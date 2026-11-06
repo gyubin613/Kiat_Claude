@@ -42,8 +42,14 @@ export type FollowupSettings = {
 
 export const DEFAULT_FOLLOWUP: FollowupSettings = { enabled: false, hours: 48, onDecline: false, autoSend: true };
 
-export function followupOf(e: Pick<Evaluation, "followup">): FollowupSettings {
-  return { ...DEFAULT_FOLLOWUP, ...(e.followup ?? {}) };
+/** 섭외 방식: manual = 담당자가 골라 초청 / auto = 정한 순서대로 자동 발송 */
+export type RecruitMode = "manual" | "auto";
+
+export function followupOf(e: Pick<Evaluation, "followup" | "recruitMode">): FollowupSettings {
+  const f = { ...DEFAULT_FOLLOWUP, ...(e.followup ?? {}) };
+  // 자동 섭외: 무응답·불참 모두 다음 순서로 넘기고 메일까지 자동 발송
+  if (e.recruitMode === "auto") return { ...f, enabled: true, onDecline: true, autoSend: true };
+  return f;
 }
 
 /** 섭외 우선순위 가중치 (각 0~100, 합으로 나누어 비율 적용) */
@@ -69,6 +75,11 @@ export type Evaluation = {
   conflictKeywords?: string[]; // 이해관계 확인용 피평가 기관명 등 (가중치 미반영)
   emailTemplate: EmailTemplate;
   followup?: FollowupSettings; // 이전 데이터 호환을 위해 선택 항목 (followupOf()로 읽기)
+  recruitMode?: RecruitMode; // 없으면 manual
+  autoQueue?: string[]; // 자동 섭외 순서 (위원 id, 앞쪽부터 발송)
+  autoExcluded?: string[]; // 자동 섭외에서 제외한 위원
+  autoRunning?: boolean; // 자동 섭외 진행 중
+  autoStartedAt?: string | null;
   status: EvaluationStatus;
   finalization: Finalization | null;
   createdAt: string;

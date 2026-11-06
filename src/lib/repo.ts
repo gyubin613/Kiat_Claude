@@ -26,6 +26,7 @@ export const K = {
   evaluatorInvites: (evaluatorId: string) => `evaluatorInvites:${evaluatorId}`,
   roster: (evalId: string) => `roster:${evalId}`,
   rosterInit: (evalId: string) => `rosterInit:${evalId}`,
+  autoLock: (evalId: string) => `autoLock:${evalId}`,
   threads: (evalId: string) => `threads:${evalId}`,
   thread: (evalId: string, evaluatorId: string) => `thread:${evalId}:${evaluatorId}`,
   announcements: (evalId: string) => `announcements:${evalId}`,
@@ -70,7 +71,7 @@ const pushLog = (inv: Invite, action: string): Invite["log"] => [{ at: nowIso(),
 // ======================= 평가 =======================
 
 type EvaluationInput = z.output<typeof evaluationInput>;
-type EvaluationCreate = Omit<EvaluationInput, "conflictKeywords"> & { conflictKeywords?: string[] };
+type EvaluationCreate = Omit<EvaluationInput, "conflictKeywords" | "recruitMode"> & { conflictKeywords?: string[]; recruitMode?: "manual" | "auto" };
 
 function normalizeSlots(slots: EvaluationInput["slots"], prev: Slot[] = []): Slot[] {
   const prevIds = new Set(prev.map((s) => s.id));
@@ -112,6 +113,11 @@ export async function createEvaluation(input: EvaluationCreate): Promise<Evaluat
     historyWeight: input.weights?.history ?? input.historyWeight,
     weights: input.weights ?? { history: input.historyWeight, preference: 100 - input.historyWeight, overseas: 0 },
     conflictKeywords: input.conflictKeywords ?? [],
+    recruitMode: input.recruitMode ?? "manual",
+    autoQueue: input.autoQueue ?? [],
+    autoExcluded: input.autoExcluded ?? [],
+    autoRunning: false,
+    autoStartedAt: null,
     emailTemplate: input.emailTemplate ?? DEFAULT_TEMPLATE,
     followup: input.followup ?? { ...DEFAULT_FOLLOWUP },
     status: "draft",
@@ -150,6 +156,8 @@ export async function updateEvaluation(id: string, patch: Partial<EvaluationInpu
         // 확정 이후에는 결과 보호: 평가 정보 변경 불가
         throw new AppError(423, "최종 확정된 평가는 수정할 수 없습니다.");
       }
+      if (patch.recruitMode && patch.recruitMode !== (cur.recruitMode ?? "manual") && cur.autoRunning)
+        throw new AppError(400, "자동 섭외 진행 중에는 섭외 방식을 바꿀 수 없습니다. 먼저 자동 섭외를 중지해 주세요.");
       return {
         ...cur,
         ...Object.fromEntries(Object.entries(patch).filter(([key]) => key !== "slots")),
@@ -586,6 +594,26 @@ export async function submitResponse(token: string, input: z.output<typeof respo
       };
     },
     "초청",
+  );
+}
+
+// ======================= 자동 섭외 =======================
+
+export async function setAutoRunning(evalId: string, running: boolean, order?: { queue?: string[]; excluded?: string[] }) {
+  return updateWithRetry<Evaluation>(
+    K.eval(evalId),
+    (cur) => {
+      if (cur.status === "finalized") throw new AppError(423, "최종 확정된 평가입니다.");
+      if (cur.recruitMode !== "auto") throw new AppError(400, "자동 섭외로 설정된 평가가 아닙니다.");
+      return {
+        ...cur,
+        autoRunning: running,
+        autoStartedAt: running ? (cur.autoStartedAt ?? nowIso()) : cur.autoStartedAt ?? null,
+        ...(order?.queue ? { autoQueue: order.queue } : {}),
+        ...(order?.excluded ? { autoExcluded: order.excluded } : {}),
+      };
+    },
+    "평가",
   );
 }
 

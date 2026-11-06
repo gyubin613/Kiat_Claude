@@ -130,6 +130,8 @@ describe("업무 시나리오", () => {
     expect(m.body).toContain("위원0 위원님");
     expect(m.body).toContain("https://x/r/abc");
     expect(m.body).not.toMatch(/\{\{/);
+    const noDept = renderTemplate(DEFAULT_TEMPLATE, { evaluation: { ...e, department: "" }, evaluator: vs[0], link: "x" });
+    expect(noDept.subject).toBe("시험 평가 평가위원 참석 요청");
     expect(recipientAllowed("me@example.com", ["@example.com"])).toBe(true);
     expect(recipientAllowed("me@other.com", ["@example.com"])).toBe(false);
     expect(recipientAllowed("me@other.com", [])).toBe(false);

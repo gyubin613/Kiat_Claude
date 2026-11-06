@@ -320,6 +320,66 @@ const errors = [];
   await shot("14-roster");
   step(`이전 평가에서 일괄 불러오기 (명단 ${n}명) · 명단 엑셀 다운로드`);
 
+  // 자동 섭외: 등록 시 선택 → 끌어서 순서 조정 → 시작 → 불참 시 바로 다음 순서
+  await page.click("a.nav-item:has-text('평가 등록')");
+  await page.click("button:has-text('새 평가 등록')");
+  await page.fill(".modal input[placeholder^='예) 2026년']", "E2E 자동 섭외 평가");
+  await page.locator(".modal input[type=date]").first().fill("2030-01-01");
+  await page.fill(".modal input[aria-label='1번 일정 날짜']", "2030-01-10");
+  await page.fill(".modal input[min='1'][max='50']", "2");
+  await page.click(".modal button[role=radio]:has-text('이전 평가에서 불러오기')");
+  const s3 = page.locator(".modal select[aria-label='불러올 평가']");
+  const o3 = await s3.locator("option").evaluateAll((os) => os.map((o) => [o.value, o.text]));
+  await s3.selectOption(o3.find((o) => o[1].includes("지역혁신"))[0]);
+  await page.click(".modal button[role=radio]:has-text('자동 섭외')");
+  await page.waitForSelector(".modal >> text=회신이 없을 때 다음 순서로 넘어가는 시간");
+  await page.click(".modal-foot button:has-text('저장')");
+  await page.waitForURL(/\/admin\/evaluators\?e=/);
+  await page.waitForSelector("table.table tbody tr");
+  await page.click("a.nav-item:has-text('우선순위·섭외')");
+  await page.waitForSelector("text=자동 섭외 순서");
+  const names = async () => page.locator(".q-row .who b").allInnerTexts();
+  const before = await names();
+  await page.dragAndDrop(`[data-testid='queue-${before[2]}']`, `[data-testid='queue-${before[0]}']`);
+  const afterDrag = await names();
+  if (afterDrag[0] !== before[2]) throw new Error(`끌어서 순서 변경 실패: ${afterDrag.slice(0, 3)}`);
+  await page.click(`button[aria-label='${afterDrag[1]} 아래로']`);
+  const order = await names();
+  if (order[2] !== afterDrag[1]) throw new Error("↓ 버튼 순서 변경 실패");
+  await page.waitForSelector("text=/여기까지 시작하자마자 메일 발송/");
+  await shot("15-auto-queue");
+  step(`자동 섭외 순서 조정 (끌어서 놓기·↓): ${order.slice(0, 3).join(" → ")}`);
+
+  await page.click("button:has-text('자동 섭외 시작')");
+  await page.click(".modal-foot button:has-text('시작')");
+  await page.waitForSelector("text=/자동 섭외를 시작했습니다/");
+  await page.waitForSelector(".auto-status .badge:has-text('진행 중')");
+  await page.click("a.nav-item:has-text('초청 메일')");
+  await page.waitForSelector("text=자동 섭외 진행 중");
+  const invited = await page.locator("tbody tr .who b").allInnerTexts();
+  const clean = (t) => t.replace(/\s*\d+차$/, "").trim();
+  if (invited.length !== 2 || clean(invited[0]) !== order[0] || clean(invited[1]) !== order[1])
+    throw new Error(`시작 시 앞 순서 2명이 초청돼야 함: ${invited}`);
+  step("자동 섭외 시작 → 앞 순서 2명 즉시 초청");
+
+  // 1순위 위원이 불참 → 즉시 3순위 위원 초청
+  await page.locator(`tbody tr:has-text('${order[0]}') button:has-text('메일')`).click();
+  const body2 = await page.locator(".modal .preview-mail").innerText();
+  const link2 = body2.match(/https?:\/\/\S+\/r\/[A-Za-z0-9_-]+/)[0];
+  await page.click(".modal-foot button:has-text('닫기')");
+  const ev = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ep = await ev.newPage();
+  await ep.goto(link2);
+  await ep.click("button[role=radio]:has-text('참석 불가')");
+  await ep.click("button:has-text('회신 제출')");
+  await ep.waitForSelector("text=회신이 정상적으로 저장되었습니다");
+  await page.reload();
+  await page.waitForSelector(`tbody tr:has-text('${order[2]}')`);
+  const after3 = (await page.locator("tbody tr .who b").allInnerTexts()).map(clean);
+  if (!after3.includes(order[2])) throw new Error("불참 후 다음 순서 위원이 초청되지 않음");
+  await shot("16-auto-next");
+  step(`불참 회신 즉시 다음 순서(${order[2]}) 자동 초청`);
+
   await page.click("a.nav-item:has-text('평가 캘린더')");
   await page.waitForSelector(".cal");
   await page.waitForTimeout(300);

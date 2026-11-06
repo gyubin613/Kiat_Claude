@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
+import AutoQueue from "@/components/AutoQueue";
 import { api, errMsg, useToast } from "@/components/ui";
 import { normalizeWeights, OVERSEAS_FULL_YEARS, rankEvaluators } from "@/lib/scoring";
 import { bachelorText, conflictHits, finalText, overseasTags } from "@/lib/profile";
@@ -95,7 +96,11 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
       <div className="page-head">
         <div>
           <h1>우선순위·섭외</h1>
-          <p>참고 점수 순으로 초청할 위원을 고릅니다. 점수는 참고자료이며 참석 가능성을 보장하지 않습니다.</p>
+          <p>
+            {evaluation.recruitMode === "auto"
+              ? "자동 섭외: 순서를 정하고 시작하면 앞 순서부터 메일이 나갑니다. 점수는 참고자료이며 참석 가능성을 보장하지 않습니다."
+              : "참고 점수 순으로 초청할 위원을 고릅니다. 점수는 참고자료이며 참석 가능성을 보장하지 않습니다."}
+          </p>
         </div>
         <Link className="btn" href={`/admin/invites?e=${evaluation.id}`}>초청 메일 화면으로</Link>
       </div>
@@ -105,7 +110,7 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
         {lost.length > 0 && <span className="item bad"><span className="n">{lost.length}</span><span className="l">불참·철회</span></span>}
         <span className={`item ${shortage ? "warn" : "ok"}`}><span className="n">{shortage}</span><span className="l">명 더 필요</span></span>
         <span className="spacer" />
-        {!locked && autoCount > 0 && (
+        {!locked && autoCount > 0 && evaluation.recruitMode !== "auto" && (
           <button className="btn sm" onClick={() => setSelected(new Set(candidates.slice(0, autoCount).map((v) => v.id)))} disabled={!candidates.length}>
             {invites?.length ? `다음 순위 ${autoCount}명 선택` : `상위 ${autoCount}명 선택`}
           </button>
@@ -146,6 +151,22 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
 
       {locked && <div className="notice ok">최종 확정된 평가입니다. 초청 대상을 바꿀 수 없습니다.</div>}
 
+      {evaluation.recruitMode === "auto" ? (
+        !ready ? (
+          <div className="card"><div className="empty">불러오는 중…</div></div>
+        ) : !evaluators?.length ? (
+          <div className="card"><div className="empty">평가위원 명단이 비어 있습니다. <Link href={`/admin/evaluators?e=${evaluation.id}`}>평가위원 명단</Link>에서 먼저 등록해 주세요.</div></div>
+        ) : (
+          <AutoQueue
+            evaluation={evaluation}
+            evaluators={evaluators}
+            invites={invites ?? []}
+            onChanged={async () => {
+              await Promise.all([reload(), reloadShell()]);
+            }}
+          />
+        )
+      ) : (
       <div className="card">
         <div className="card-head">
           <div className="row" style={{ flex: 1 }}>
@@ -224,6 +245,7 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -31,6 +31,9 @@ const evaluationBase = {
   historyWeight: z.coerce.number().min(0).max(100),
   weights: weightsSchema,
   conflictKeywords: z.array(z.string().trim().min(1).max(60)).max(30),
+  recruitMode: z.enum(["manual", "auto"]),
+  autoQueue: z.array(z.string().max(40)).max(500),
+  autoExcluded: z.array(z.string().max(40)).max(500),
   emailTemplate: z.object({ subject: text(200).min(1, "메일 제목을 입력해 주세요."), body: text(5000).min(1, "메일 본문을 입력해 주세요.") }),
   followup: z.object({
     enabled: z.boolean(),
@@ -49,6 +52,9 @@ export const evaluationInput = z.object({
   historyWeight: evaluationBase.historyWeight.default(50),
   weights: weightsSchema.optional(),
   conflictKeywords: evaluationBase.conflictKeywords.default([]),
+  recruitMode: evaluationBase.recruitMode.default("manual"),
+  autoQueue: evaluationBase.autoQueue.optional(),
+  autoExcluded: evaluationBase.autoExcluded.optional(),
   emailTemplate: evaluationBase.emailTemplate.optional(),
   followup: evaluationBase.followup.optional(),
 });
