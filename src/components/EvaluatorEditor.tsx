@@ -101,10 +101,12 @@ const toValue = (k: Key, s: string) => {
  * 평가위원 정보 수정창 — 모든 항목을 한 화면에 표시하고, 바뀐 항목만 저장한다.
  */
 export default function EvaluatorEditor({
+  evaluationId,
   evaluator,
   onClose,
   onSaved,
 }: {
+  evaluationId: string;
   evaluator: Evaluator | null;
   onClose: () => void;
   onSaved: (v: Evaluator) => void;
@@ -126,7 +128,7 @@ export default function EvaluatorEditor({
       if (base) {
         if (!changed.length) return onClose();
         const patch = Object.fromEntries(changed.map((k) => [k, toValue(k, vals[k])]));
-        const res = await api<{ evaluator: Evaluator }>(`/api/admin/evaluators/${base.id}`, {
+        const res = await api<{ evaluator: Evaluator }>(`/api/admin/evaluations/${evaluationId}/evaluators/${base.id}`, {
           method: "PATCH",
           json: { ...patch, version: base.version },
         });
@@ -134,7 +136,7 @@ export default function EvaluatorEditor({
         onSaved(res.evaluator);
       } else {
         const body = Object.fromEntries((Object.keys(vals) as Key[]).map((k) => [k, toValue(k, vals[k])]));
-        const res = await api<{ evaluator: Evaluator }>("/api/admin/evaluators", { method: "POST", json: { ...body, allowDuplicate } });
+        const res = await api<{ evaluator: Evaluator }>(`/api/admin/evaluations/${evaluationId}/evaluators`, { method: "POST", json: { ...body, allowDuplicate } });
         toast(`${res.evaluator.name} 위원을 등록했습니다.`, "ok");
         onSaved(res.evaluator);
       }

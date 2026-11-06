@@ -5,6 +5,8 @@ import {
   applyInviteAction,
   createEvaluation,
   createEvaluator,
+  copyEvaluators,
+  listEvaluators,
   createInvites,
   finalizeEvaluation,
   getEvaluation,
@@ -41,17 +43,21 @@ function kstDate(offsetDays: number) {
   return d.toISOString().slice(0, 10);
 }
 
+const rankDemo = <T extends Evaluator>(list: T[]) =>
+  [...list].sort((a, b) => (b.preference ?? 3) + (b.pastAttended ?? 0) * 0.3 - ((a.preference ?? 3) + (a.pastAttended ?? 0) * 0.3) || a.name.localeCompare(b.name, "ko"));
+
 export async function seedDemoData(baseUrl = "http://localhost:3000") {
   await resetAll();
   const rand = rng(20261103);
   const pick = <T,>(arr: T[]) => arr[Math.floor(rand() * arr.length)];
 
-  const evaluators: Evaluator[] = [];
+  // 가상 위원 30명의 입력값 (엑셀 업로드에 해당)
+  const inputs: Parameters<typeof createEvaluator>[1][] = [];
   for (let i = 0; i < 30; i++) {
     const noHistory = i % 7 === 3;
     const invited = noHistory ? null : Math.floor(rand() * 9);
     const attended = invited == null ? null : Math.floor(rand() * (invited + 1));
-    const ev = await createEvaluator(
+    inputs.push(
       {
         name: SURNAMES[i % SURNAMES.length] + GIVEN[i],
         org: pick(ORGS),
@@ -89,10 +95,49 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
           };
         })(),
       },
-      { allowDuplicate: true },
     );
-    evaluators.push(ev);
   }
+
+  // ③ 확정 완료된 평가
+  const e3 = await createEvaluation({
+    name: "지역혁신 클러스터 연차평가",
+    department: "지역산업팀",
+    contactName: "이운영 선임",
+    deadline: kstDate(-3),
+    seats: 3,
+    requirements: "",
+    slots: [
+      { date: kstDate(7), start: "10:00", end: "16:00", place: "지역센터 회의실" },
+      { date: kstDate(8), start: "10:00", end: "16:00", place: "지역센터 회의실" },
+    ],
+    historyWeight: 40,
+    emailTemplate: DEFAULT_TEMPLATE,
+  });
+  // 지난 평가 명단: 엑셀로 20명 업로드
+  for (const inp of inputs.slice(0, 20)) await createEvaluator(e3.id, inp, { allowDuplicate: true });
+  const roster3 = rankDemo(await listEvaluators(e3.id));
+  const third = roster3.slice(2, 7);
+  await createInvites(e3.id, third.map((v) => v.id));
+  const ev3 = await getEvaluation(e3.id);
+  const inv3 = await listInvites(e3.id);
+  const plan3: Attendance[] = ["yes", "yes", "no", "yes", "conditional"];
+  for (let i = 0; i < third.length; i++) {
+    const inv = inv3.find((x) => x.evaluatorId === third[i].id)!;
+    await applyInviteAction(e3.id, inv.evaluatorId, { type: "markSent", via: "manual" });
+    await submitResponse(inv.token, {
+      attendance: plan3[i],
+      slotIds: plan3[i] === "no" ? [] : [ev3.slots[0].id, ...(i % 2 ? [ev3.slots[1].id] : [])],
+      note: plan3[i] === "conditional" ? "오전만 가능" : "",
+    });
+  }
+  const latest3 = await getEvaluation(e3.id);
+  await finalizeEvaluation(e3.id, {
+    slotId: ev3.slots[0].id,
+    evaluatorIds: [third[0].id, third[1].id, third[3].id],
+    memo: "시연용 확정 데이터",
+    version: latest3.version,
+  });
+
 
   // ① 회신 진행 중인 평가
   const e1 = await createEvaluation({
@@ -113,9 +158,10 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
     emailTemplate: DEFAULT_TEMPLATE,
     followup: { enabled: true, hours: 48, onDecline: false, autoSend: true },
   });
-  const ranked = [...evaluators].sort(
-    (a, b) => (b.preference ?? 3) + (b.pastAttended ?? 0) * 0.3 - ((a.preference ?? 3) + (a.pastAttended ?? 0) * 0.3),
-  );
+  // 이번 평가 명단: 지난 평가 명단을 일괄로 불러오고(참여 결과를 과거 이력에 반영) + 새 위원 10명 엑셀 업로드
+  await copyEvaluators(e1.id, e3.id, null, { applyHistory: true });
+  for (const inp of inputs.slice(20)) await createEvaluator(e1.id, inp, { allowDuplicate: true });
+  const ranked = rankDemo(await listEvaluators(e1.id));
   const first = ranked.slice(0, 8);
   await createInvites(e1.id, first.map((v) => v.id));
   const plan: (null | { a: Attendance; s: number[]; n?: string })[] = [
@@ -173,42 +219,6 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
     followup: { enabled: true, hours: 24, onDecline: true, autoSend: true },
   });
 
-  // ③ 확정 완료된 평가
-  const e3 = await createEvaluation({
-    name: "지역혁신 클러스터 연차평가",
-    department: "지역산업팀",
-    contactName: "이운영 선임",
-    deadline: kstDate(-3),
-    seats: 3,
-    requirements: "",
-    slots: [
-      { date: kstDate(7), start: "10:00", end: "16:00", place: "지역센터 회의실" },
-      { date: kstDate(8), start: "10:00", end: "16:00", place: "지역센터 회의실" },
-    ],
-    historyWeight: 40,
-    emailTemplate: DEFAULT_TEMPLATE,
-  });
-  const third = ranked.slice(10, 15);
-  await createInvites(e3.id, third.map((v) => v.id));
-  const ev3 = await getEvaluation(e3.id);
-  const inv3 = await listInvites(e3.id);
-  const plan3: Attendance[] = ["yes", "yes", "no", "yes", "conditional"];
-  for (let i = 0; i < third.length; i++) {
-    const inv = inv3.find((x) => x.evaluatorId === third[i].id)!;
-    await applyInviteAction(e3.id, inv.evaluatorId, { type: "markSent", via: "manual" });
-    await submitResponse(inv.token, {
-      attendance: plan3[i],
-      slotIds: plan3[i] === "no" ? [] : [ev3.slots[0].id, ...(i % 2 ? [ev3.slots[1].id] : [])],
-      note: plan3[i] === "conditional" ? "오전만 가능" : "",
-    });
-  }
-  const latest3 = await getEvaluation(e3.id);
-  await finalizeEvaluation(e3.id, {
-    slotId: ev3.slots[0].id,
-    evaluatorIds: [third[0].id, third[1].id, third[3].id],
-    memo: "시연용 확정 데이터",
-    version: latest3.version,
-  });
-
-  return { evaluators: evaluators.length, evaluations: 3 };
+  // ② 소재부품 중간평가는 명단을 비워 두어 '이전 평가에서 불러오기'를 바로 시험할 수 있게 한다
+  return { evaluators: inputs.length, evaluations: 3 };
 }

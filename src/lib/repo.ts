@@ -24,6 +24,8 @@ export const K = {
   invite: (evalId: string, evaluatorId: string) => `invite:${evalId}:${evaluatorId}`,
   token: (t: string) => `token:${t}`,
   evaluatorInvites: (evaluatorId: string) => `evaluatorInvites:${evaluatorId}`,
+  roster: (evalId: string) => `roster:${evalId}`,
+  rosterInit: (evalId: string) => `rosterInit:${evalId}`,
   threads: (evalId: string) => `threads:${evalId}`,
   thread: (evalId: string, evaluatorId: string) => `thread:${evalId}:${evaluatorId}`,
   announcements: (evalId: string) => `announcements:${evalId}`,
@@ -119,6 +121,7 @@ export async function createEvaluation(input: EvaluationCreate): Promise<Evaluat
     version: 1,
   };
   await kv().set(K.eval(e.id), e);
+  await kv().set(K.rosterInit(e.id), true); // 새 평가는 빈 명단으로 시작
   await kv().sadd(K.evals, e.id);
   return e;
 }
@@ -161,8 +164,13 @@ export async function deleteEvaluation(id: string) {
   const store = kv();
   const invites = await listInvites(id);
   const threadIds = await store.smembers(K.threads(id));
+  const rosterIds = await store.smembers(K.roster(id));
+  const owned = ((await store.mget<Evaluator>(rosterIds.map(K.evaluator))).filter(Boolean) as Evaluator[]).filter((v) => v.evaluationId === id);
   await store.del(
     K.eval(id),
+    K.roster(id),
+    K.rosterInit(id),
+    ...owned.map((v) => K.evaluator(v.id)),
     K.invites(id),
     K.threads(id),
     K.announcements(id),
@@ -185,17 +193,50 @@ export function normalizeEvaluator(v: Evaluator): Evaluator {
   return { ...EDUCATION_DEFAULTS, ...v };
 }
 
-export async function listEvaluators(): Promise<Evaluator[]> {
+/**
+ * 평가별 평가위원 명단
+ * - 평가마다 독립된 명단(roster)을 가진다. 위원 레코드도 평가별로 따로 저장되어,
+ *   한 평가에서 수정해도 다른 평가 명단에는 영향이 없다.
+ * - 이전 버전의 '공통 명단'(evaluators)은 기존 평가에 한해 처음 열 때 그대로 연결(마이그레이션)한다.
+ */
+async function ensureRoster(evalId: string) {
   const store = kv();
-  const ids = await store.smembers(K.evaluators);
-  const items = ((await store.mget<Evaluator>(ids.map(K.evaluator))).filter(Boolean) as Evaluator[]).map(normalizeEvaluator);
+  if (await store.get<boolean>(K.rosterInit(evalId))) return;
+  if (!(await store.setnx(K.rosterInit(evalId), true))) return;
+  const legacy = await store.smembers(K.evaluators);
+  if (legacy.length) await store.sadd(K.roster(evalId), ...legacy);
+}
+
+async function loadEvaluators(ids: string[]) {
+  const items = ((await kv().mget<Evaluator>(ids.map(K.evaluator))).filter(Boolean) as Evaluator[]).map(normalizeEvaluator);
   return items.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+}
+
+export async function listEvaluators(evalId: string): Promise<Evaluator[]> {
+  await ensureRoster(evalId);
+  return loadEvaluators(await kv().smembers(K.roster(evalId)));
+}
+
+export async function rosterCount(evalId: string) {
+  await ensureRoster(evalId);
+  return (await kv().smembers(K.roster(evalId))).length;
+}
+
+/** 이전 버전 공통 명단 (불러오기 원본으로만 사용) */
+export async function listLegacyEvaluators(): Promise<Evaluator[]> {
+  return loadEvaluators(await kv().smembers(K.evaluators));
 }
 
 export async function getEvaluator(id: string) {
   const v = await kv().get<Evaluator>(K.evaluator(id));
   if (!v) throw new AppError(404, "평가위원 정보를 찾을 수 없습니다.");
   return normalizeEvaluator(v);
+}
+
+async function assertInRoster(evalId: string, evaluatorId: string) {
+  await ensureRoster(evalId);
+  if (!(await kv().smembers(K.roster(evalId))).includes(evaluatorId))
+    throw new AppError(404, "이 평가의 명단에 없는 평가위원입니다.");
 }
 
 type DupTarget = Pick<Evaluator, "id" | "name" | "org" | "email">;
@@ -219,32 +260,34 @@ export function findDuplicate<T extends DupTarget>(
   return null;
 }
 
-export async function createEvaluator(input: EvaluatorCreate, opts: { allowDuplicate?: boolean } = {}) {
-  const all = await listEvaluators();
+export async function createEvaluator(evalId: string, input: EvaluatorCreate, opts: { allowDuplicate?: boolean } = {}) {
+  await getEvaluation(evalId);
+  const all = await listEvaluators(evalId);
   const dup = findDuplicate(input, all);
   if (dup && !opts.allowDuplicate) {
     throw new AppError(
       409,
       dup.by === "email"
-        ? `같은 이메일로 등록된 평가위원이 있습니다: ${dup.evaluator.name}(${dup.evaluator.org || "소속 미입력"})`
-        : `같은 성명·소속기관의 평가위원이 있습니다: ${dup.evaluator.name}(${dup.evaluator.org})`,
+        ? `이 평가 명단에 같은 이메일의 위원이 있습니다: ${dup.evaluator.name}(${dup.evaluator.org || "소속 미입력"})`
+        : `이 평가 명단에 같은 성명·소속기관의 위원이 있습니다: ${dup.evaluator.name}(${dup.evaluator.org})`,
       { duplicate: dup.evaluator, by: dup.by },
     );
   }
   const now = nowIso();
-  const v: Evaluator = { id: newId("v_"), ...EDUCATION_DEFAULTS, ...input, createdAt: now, updatedAt: now, version: 1 };
+  const v: Evaluator = { id: newId("v_"), ...EDUCATION_DEFAULTS, ...input, evaluationId: evalId, createdAt: now, updatedAt: now, version: 1 };
   await kv().set(K.evaluator(v.id), v);
-  await kv().sadd(K.evaluators, v.id);
+  await kv().sadd(K.roster(evalId), v.id);
   return v;
 }
 
-export async function updateEvaluator(id: string, patch: Partial<EvaluatorInput>, version: number) {
+export async function updateEvaluator(evalId: string, id: string, patch: Partial<EvaluatorInput>, version: number) {
+  await assertInRoster(evalId, id);
   if (patch.email !== undefined || patch.name !== undefined || patch.org !== undefined) {
     const cur = await getEvaluator(id);
     const merged = { name: patch.name ?? cur.name, org: patch.org ?? cur.org, email: patch.email ?? cur.email };
-    const dup = findDuplicate(merged, await listEvaluators(), id);
+    const dup = findDuplicate(merged, await listEvaluators(evalId), id);
     if (dup?.by === "email")
-      throw new AppError(409, `같은 이메일로 등록된 평가위원이 있습니다: ${dup.evaluator.name}`, { duplicate: dup.evaluator });
+      throw new AppError(409, `이 평가 명단에 같은 이메일의 위원이 있습니다: ${dup.evaluator.name}`, { duplicate: dup.evaluator });
   }
   return updateWithVersion<Evaluator>(
     K.evaluator(id),
@@ -259,18 +302,15 @@ export async function updateEvaluator(id: string, patch: Partial<EvaluatorInput>
   );
 }
 
-export async function deleteEvaluator(id: string) {
+/** 이 평가 명단에서 제외. 이 평가에서 초청한 위원은 제외할 수 없다. */
+export async function deleteEvaluator(evalId: string, id: string) {
+  await assertInRoster(evalId, id);
   const store = kv();
-  const evalIds = await store.smembers(K.evaluatorInvites(id));
-  if (evalIds.length) {
-    const evals = (await store.mget<Evaluation>(evalIds.map(K.eval))).filter(Boolean) as Evaluation[];
-    throw new AppError(
-      400,
-      `초청 이력이 있는 평가위원은 삭제할 수 없습니다. (${evals.map((e) => e.name).join(", ")})`,
-    );
-  }
-  await store.del(K.evaluator(id));
-  await store.srem(K.evaluators, id);
+  if (await store.get(K.invite(evalId, id))) throw new AppError(400, "이 평가에 초청한 위원은 명단에서 뺄 수 없습니다. 초청 메일 화면에서 철회해 주세요.");
+  await store.srem(K.roster(evalId), id);
+  const v = await store.get<Evaluator>(K.evaluator(id));
+  // 이 평가 소유의 레코드이고 다른 평가에서 초청한 적이 없으면 레코드도 삭제
+  if (v?.evaluationId === evalId && !(await store.smembers(K.evaluatorInvites(id))).length) await store.del(K.evaluator(id));
 }
 
 export type ImportMode = "skip" | "fill" | "overwrite";
@@ -281,17 +321,18 @@ export type ImportRowResult = {
   message?: string;
 };
 
-/** 엑셀 일괄 등록. 중복 시 건너뛰기 / 빈 항목만 보완 / 덮어쓰기 */
+/** 엑셀 일괄 등록(이 평가 명단). 중복 시 건너뛰기 / 빈 항목만 보완 / 덮어쓰기 */
 export async function importEvaluators(
-  rows: { row: number; data: EvaluatorInput }[],
+  evalId: string,
+  rows: { row: number; data: EvaluatorCreate }[],
   mode: ImportMode,
 ): Promise<ImportRowResult[]> {
-  const all = await listEvaluators();
+  const all = await listEvaluators(evalId);
   const results: ImportRowResult[] = [];
   for (const { row, data } of rows) {
     const dup = findDuplicate(data, all);
     if (!dup) {
-      const v = await createEvaluator(data, { allowDuplicate: true });
+      const v = await createEvaluator(evalId, data, { allowDuplicate: true });
       all.push(v);
       results.push({ row, name: data.name, result: "created" });
       continue;
@@ -314,12 +355,64 @@ export async function importEvaluators(
       continue;
     }
     try {
-      const next = await updateEvaluator(cur.id, patch, cur.version);
+      const next = await updateEvaluator(evalId, cur.id, patch, cur.version);
       all.splice(all.indexOf(cur), 1, next);
       results.push({ row, name: data.name, result: "updated", message: `${Object.keys(patch).length}개 항목 반영` });
     } catch (e) {
       results.push({ row, name: data.name, result: "error", message: e instanceof Error ? e.message : "오류" });
     }
+  }
+  return results;
+}
+
+const COPY_FIELDS = [
+  "name", "org", "email", "phone", "expertise", "pastInvited", "pastAttended", "preference", "note",
+  "bachelorSchool", "bachelorMajor", "bachelorAbroad", "finalDegree", "finalSchool", "finalMajor", "finalAbroad",
+  "overseasWorkYears", "overseasWorkDetail",
+] as const;
+
+export type CopyResult = { name: string; result: "created" | "skipped"; message?: string };
+
+/**
+ * 이전 평가(또는 이전 버전 공통 명단)의 위원을 이 평가 명단으로 복사한다.
+ * - ids 가 없으면 전체(일괄), 있으면 선택한 위원만
+ * - applyHistory: 원본 평가에서 초청(발송)했으면 초청 +1, 최종 확정 위원이면 참여 +1 을 과거 이력에 반영
+ * - 이 평가 명단에 이미 있는 위원(이메일 또는 성명·소속 일치)은 건너뜀
+ */
+export async function copyEvaluators(
+  toEvalId: string,
+  from: string, // 평가 id 또는 "legacy"
+  ids: string[] | null,
+  opts: { applyHistory?: boolean } = {},
+): Promise<CopyResult[]> {
+  const target = await getEvaluation(toEvalId);
+  if (target.status === "finalized") throw new AppError(423, "최종 확정된 평가의 명단은 바꿀 수 없습니다.");
+  if (from === toEvalId) throw new AppError(400, "같은 평가에서는 불러올 수 없습니다.");
+  const source = from === "legacy" ? null : await getEvaluation(from);
+  const pool = from === "legacy" ? await listLegacyEvaluators() : await listEvaluators(from);
+  const picked = ids ? pool.filter((v) => ids.includes(v.id)) : pool;
+  if (!picked.length) throw new AppError(400, "불러올 위원을 선택해 주세요.");
+  const invites = source ? await listInvites(source.id) : [];
+  const finalIds = new Set(source?.finalization?.members.map((m) => m.evaluatorId) ?? []);
+  const existing = await listEvaluators(toEvalId);
+  const results: CopyResult[] = [];
+  for (const v of picked) {
+    const dup = findDuplicate(v, existing);
+    if (dup) {
+      results.push({ name: v.name, result: "skipped", message: "이미 명단에 있음" });
+      continue;
+    }
+    const data = Object.fromEntries(COPY_FIELDS.map((k) => [k, v[k]])) as unknown as EvaluatorCreate;
+    if (opts.applyHistory && source) {
+      const inv = invites.find((i) => i.evaluatorId === v.id);
+      if (inv && inv.status !== "pending") {
+        data.pastInvited = (v.pastInvited ?? 0) + 1;
+        data.pastAttended = (v.pastAttended ?? 0) + (finalIds.has(v.id) ? 1 : 0);
+      }
+    }
+    const created = await createEvaluator(toEvalId, data, { allowDuplicate: true });
+    existing.push(created);
+    results.push({ name: v.name, result: "created" });
   }
   return results;
 }
@@ -346,7 +439,7 @@ export async function createInvites(evalId: string, evaluatorIds: string[], opts
   const created: Invite[] = [];
   for (const evaluatorId of [...new Set(evaluatorIds)]) {
     if (existing.some((i) => i.evaluatorId === evaluatorId)) continue;
-    await getEvaluator(evaluatorId);
+    await assertInRoster(evalId, evaluatorId);
     const now = nowIso();
     const inv: Invite = {
       evaluationId: evalId,

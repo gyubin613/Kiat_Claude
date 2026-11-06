@@ -9,8 +9,8 @@ async function setup() {
     name: "소통 시험", department: "팀", contactName: "홍", deadline: "2030-01-01", seats: 2, requirements: "",
     slots: [{ date: "2030-01-10", start: "10:00", end: "", place: "" }], historyWeight: 50,
   });
-  const a = await createEvaluator(evaluatorInput.parse({ name: "가위원", email: "a@example.com" }));
-  const b = await createEvaluator(evaluatorInput.parse({ name: "나위원", email: "b@example.com" }));
+  const a = await createEvaluator(e.id, evaluatorInput.parse({ name: "가위원", email: "a@example.com" }));
+  const b = await createEvaluator(e.id, evaluatorInput.parse({ name: "나위원", email: "b@example.com" }));
   await createInvites(e.id, [a.id, b.id]);
   const invs = await listInvites(e.id);
   return { e, a, b, ta: invs.find((i) => i.evaluatorId === a.id)!.token, tb: invs.find((i) => i.evaluatorId === b.id)!.token };

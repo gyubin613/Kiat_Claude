@@ -1,5 +1,5 @@
 import { body, handle, json } from "@/lib/api";
-import { createEvaluation, inviteCounts, listEvaluations, listInvites } from "@/lib/repo";
+import { createEvaluation, inviteCounts, listEvaluations, listInvites, rosterCount } from "@/lib/repo";
 import { listThreads } from "@/lib/comm";
 import { followupOf, pendingQuestion } from "@/lib/types";
 import { evaluationInput } from "@/lib/validate";
@@ -10,7 +10,7 @@ export const GET = handle(async () => {
   const evals = await listEvaluations();
   const withCounts = await Promise.all(
     evals.map(async (e) => {
-      const [invites, threads] = await Promise.all([listInvites(e.id), listThreads(e.id)]);
+      const [invites, threads, roster] = await Promise.all([listInvites(e.id), listThreads(e.id), rosterCount(e.id)]);
       const f = followupOf(e);
       const now = Date.now();
       const overdue = invites.filter(
@@ -19,6 +19,7 @@ export const GET = handle(async () => {
       return {
         ...e,
         counts: inviteCounts(invites),
+        rosterCount: roster,
         unread: threads.reduce((n, t) => n + t.unreadAdmin, 0),
         questionsWaiting: threads.filter((t) => pendingQuestion(t)).length,
         overdue,

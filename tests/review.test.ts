@@ -17,7 +17,7 @@ async function setup() {
     followup: { enabled: true, hours: 48, onDecline: true, autoSend: false },
   });
   const vs: Evaluator[] = [];
-  for (let i = 0; i < 3; i++) vs.push(await createEvaluator(evaluatorInput.parse({ name: `위원${i}`, email: `v${i}@example.com` })));
+  for (let i = 0; i < 3; i++) vs.push(await createEvaluator(e.id, evaluatorInput.parse({ name: `위원${i}`, email: `v${i}@example.com` })));
   await createInvites(e.id, vs.map((v) => v.id));
   for (const v of vs) await applyInviteAction(e.id, v.id, { type: "markSent", via: "manual" });
   const invs = await listInvites(e.id);

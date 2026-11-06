@@ -55,7 +55,7 @@ export async function runFollowupFor(evalId: string, baseUrl: string, now = new 
 
   const k = Math.min(plan.needed, plan.triggers.length);
   const invitedIds = new Set(invites.map((i) => i.evaluatorId));
-  const ranked = rankEvaluators(await listEvaluators(), weightsOf(e)).filter((v) => !invitedIds.has(v.id));
+  const ranked = rankEvaluators(await listEvaluators(evalId), weightsOf(e)).filter((v) => !invitedIds.has(v.id));
   // 자동 발송이 켜져 있으면 이메일이 있는 위원을 우선
   const pool = f.autoSend ? [...ranked.filter((v) => v.email), ...ranked.filter((v) => !v.email)] : ranked;
   const picks = pool.slice(0, k);

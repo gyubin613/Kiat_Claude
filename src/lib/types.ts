@@ -98,6 +98,7 @@ export type Evaluator = {
   // 해외 근무 경력
   overseasWorkYears: number | null; // null = 미입력, 0 = 없음
   overseasWorkDetail: string;
+  evaluationId?: string; // 소속 평가 (이전 버전 공통 명단은 없음)
   createdAt: string;
   updatedAt: string;
   version: number;
