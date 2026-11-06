@@ -1,0 +1,29 @@
+{
+  "name": "kiat-mail-collector",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "samples": "node scripts/make-samples.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@fontsource/ibm-plex-sans-kr": "^5.3.0",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2",
+    "next": "^15.5.29",
+    "postal-mime": "^4.2.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  },
+  "private": true
+}

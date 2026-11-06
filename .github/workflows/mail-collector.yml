@@ -1,0 +1,30 @@
+name: 메일 정리 도우미 CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["mail-collector/**", ".github/workflows/mail-collector.yml"]
+  pull_request:
+    paths: ["mail-collector/**", ".github/workflows/mail-collector.yml"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: mail-collector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mail-collector/package-lock.json
+      - run: npm ci
+      - name: 타입 검사
+        run: npm run typecheck
+      - name: 테스트 (매칭·정리·AI 검증)
+        run: npm test
+      - name: 빌드
+        run: npm run build
