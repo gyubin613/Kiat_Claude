@@ -5,7 +5,8 @@ import {
   importEvaluators, listInvites, reviewCondition, resolveToken, slotSummary, submitResponse, updateEvaluation, updateEvaluator,
 } from "@/lib/repo";
 import { evaluatorInput } from "@/lib/validate";
-import { renderTemplate, DEFAULT_TEMPLATE, recipientAllowed } from "@/lib/email";
+import { renderTemplate, DEFAULT_TEMPLATE } from "@/lib/email";
+import { recipientAllowed } from "@/lib/mailer";
 
 const evInput = (name: string, email = "") => evaluatorInput.parse({ name, org: "가상대", email });
 

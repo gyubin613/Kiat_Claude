@@ -181,7 +181,7 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
     await applyInviteAction(e1.id, inv.evaluatorId, { type: "markSent", via: "manual" });
     const p = plan[i];
     if (p) await submitResponse(inv.token, { attendance: p.a, slotIds: p.s.map((k) => ev1.slots[k].id), note: p.n ?? "" });
-    if (p?.a === "conditional") await postConditionMessage(e1.id, inv.evaluatorId, p.n ?? "", baseUrl);
+    if (p?.a === "conditional") await postConditionMessage(e1.id, inv.evaluatorId, p.n ?? "", baseUrl, { notify: false });
   }
 
   // 회신 대기 2명: 1명은 48시간 경과(자동 후속 대상), 1명은 20시간 경과

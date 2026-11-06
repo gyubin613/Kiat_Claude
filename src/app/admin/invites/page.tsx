@@ -7,7 +7,7 @@ import { useEvalData } from "@/components/useEvalData";
 import { api, copyText, errMsg, Modal, RowMenu, useConfirm, useToast } from "@/components/ui";
 import { DEFAULT_TEMPLATE, mailtoUrl, PLACEHOLDERS, renderTemplate } from "@/lib/email";
 import { STATE_CLASS, DISPLAY_STATE_LABEL, followupOf, inviteDisplayState, type Evaluator, type Invite } from "@/lib/types";
-import { formatDateTime } from "@/lib/util";
+import { formatDateTime, recipientAllowed } from "@/lib/util";
 
 const STATE_CLS = STATE_CLASS;
 
@@ -101,6 +101,7 @@ function InviteDialog({
   const link = `${window.location.origin}/r/${invite.token}`;
   const mail = renderTemplate(evaluation.emailTemplate, { evaluation, evaluator, link });
   const locked = evaluation.status === "finalized";
+  const canDirect = !!evaluator.email && !!meta?.email.configured && recipientAllowed(evaluator.email, meta.email.allowList);
 
   async function action(json: Record<string, unknown>, msg: string) {
     setBusy(true);
@@ -153,7 +154,7 @@ function InviteDialog({
             <div><span className="muted">제목</span> <b>{mail.subject}</b></div>
           </div>
           <div className="row" style={{ justifyContent: "flex-end", alignContent: "start" }}>
-            {evaluator.email && <a className="btn primary" href={mailtoUrl(evaluator.email, mail)}>업무용 메일 앱으로 열기</a>}
+            {evaluator.email && <a className={`btn ${meta?.email.configured ? "" : "primary"}`} href={mailtoUrl(evaluator.email, mail)}>업무용 메일 앱으로 열기</a>}
             <button className="btn" onClick={async () => (await copyText(mail.subject)) && toast("제목을 복사했습니다.", "ok")}>제목 복사</button>
             <button className="btn" onClick={async () => (await copyText(mail.body)) && toast("본문을 복사했습니다.", "ok")}>본문 복사</button>
             <button className="btn" onClick={async () => (await copyText(link)) && toast("회신 링크를 복사했습니다.", "ok")}>링크 복사</button>
@@ -161,26 +162,40 @@ function InviteDialog({
         </div>
         <div className="preview-mail">{mail.body}</div>
         <div className="small muted">
-          기존 업무용 이메일로 발송한 뒤 <b>발송 완료 표시</b>를 눌러 주세요. 평가위원이 링크로 회신하면 자동으로 발송된 것으로 처리됩니다.
+          {meta?.email.configured
+            ? "아래 '위원에게 메일 보내기'를 누르면 바로 발송되고 발송 완료로 기록됩니다. 업무용 메일 앱으로 보낸 경우에는 '발송 완료 표시'를 눌러 주세요."
+            : "기존 업무용 이메일로 발송한 뒤 '발송 완료 표시'를 눌러 주세요. 평가위원이 링크로 회신하면 자동으로 발송된 것으로 처리됩니다."}
         </div>
 
         <div className="card">
           <div className="card-body stack" style={{ gap: 10 }}>
             <div className="row between">
-              <h3>외부 발송 서비스 연동 (시험 단계)</h3>
-              <span className={`badge ${meta?.email.configured ? "ok" : ""}`}>{meta?.email.configured ? `연결됨 · ${meta.email.from}` : "미설정"}</span>
+              <h3>시스템에서 바로 보내기</h3>
+              <span className={`badge ${meta?.email.configured ? "ok" : ""}`}>
+                {meta?.email.configured ? `보내는 주소 ${meta.email.from}` : "메일 설정 전"}
+              </span>
             </div>
             {meta?.email.configured ? (
               <>
                 <div className="row">
-                  <input className="input" style={{ maxWidth: 280 }} placeholder="시험 수신 주소 (본인 메일)" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
-                  <button className="btn" disabled={busy || !testTo} onClick={() => sendEmail("test")}>시험 발송</button>
-                  <button className="btn" disabled={busy || !evaluator.email || locked || invite.status === "withdrawn"} onClick={() => sendEmail("direct")} title="허용목록에 있는 주소만 발송됩니다">위원에게 직접 발송</button>
+                  <button className="btn primary" disabled={busy || !canDirect || locked || invite.status === "withdrawn"} onClick={() => sendEmail("direct")}>
+                    {evaluator.name} 위원에게 메일 보내기
+                  </button>
+                  {!evaluator.email ? (
+                    <span className="small muted">위원 이메일이 없습니다.</span>
+                  ) : !canDirect ? (
+                    <span className="small" style={{ color: "var(--warn)" }}>발송 허용 주소가 아닙니다. <a href="/admin/settings">메일 설정</a>에서 허용 주소를 확인해 주세요.</span>
+                  ) : null}
                 </div>
-                <p className="small muted">수신자 제한: 허용목록({meta.email.allowList.length ? meta.email.allowList.join(", ") : "비어 있음 — 직접 발송 불가"})에 있는 주소로만 발송됩니다.</p>
+                <div className="row">
+                  <input className="input" style={{ maxWidth: 260 }} placeholder="내 메일 주소로 미리 받아 보기" value={testTo} onChange={(e) => setTestTo(e.target.value)} aria-label="시험 수신 주소" />
+                  <button className="btn" disabled={busy || !testTo} onClick={() => sendEmail("test")}>시험 발송</button>
+                </div>
               </>
             ) : (
-              <p className="small muted">RESEND_API_KEY, EMAIL_FROM, EMAIL_ALLOWED_RECIPIENTS 환경변수를 설정하면 시험 발송을 사용할 수 있습니다. 발신자 인증·기관 보안정책 검토 후 적용 여부를 결정하세요.</p>
+              <p className="small muted">
+                메일 계정(네이버·Gmail·기관 메일)을 연결하면 이 화면에서 바로 보낼 수 있습니다. <a href="/admin/settings">메일 설정 안내</a>
+              </p>
             )}
           </div>
         </div>
@@ -241,7 +256,7 @@ function FollowupBanner({ evaluation, onRan }: { evaluation: EvalWithCounts; onR
         {f.enabled ? (
           <>
             <b>자동 후속 안내 사용 중</b> — 발송 후 <b>{f.hours}시간</b> 안에 회신이 없으면{f.onDecline ? " (또는 참석 불가 회신 시)" : ""} 다음 순위 위원을 자동 초청
-            {f.autoSend ? (meta?.email.configured ? "하고 메일을 발송합니다." : "합니다. (발송 서비스 미설정 → 초청 대상만 추가, 발송은 수동)") : "합니다. (메일은 수동 발송)"}
+            {f.autoSend ? (meta?.email.configured ? "하고 메일을 발송합니다." : "합니다. (메일 설정 전이라 초청 대상만 추가, 메일은 직접 발송)") : "합니다. (메일은 직접 발송)"}
           </>
         ) : (
           <>자동 후속 안내가 꺼져 있습니다. 평가 등록 화면의 평가 수정에서 평가별로 설정할 수 있습니다.</>
@@ -253,7 +268,9 @@ function FollowupBanner({ evaluation, onRan }: { evaluation: EvalWithCounts; onR
 }
 
 function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
-  const { reload: reloadShell } = useAdmin();
+  const { reload: reloadShell, meta } = useAdmin();
+  const [sending, setSending] = useState(false);
+  const [sendResults, setSendResults] = useState<{ name: string; status: "sent" | "failed" | "skipped"; detail?: string }[] | null>(null);
   const fu = followupOf(evaluation);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -295,6 +312,32 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
     await action(inv, { type: "withdraw", reason: reason === "ok" ? "" : reason }, "섭외를 철회했습니다.");
   }
 
+  async function bulkEmail() {
+    const ids = (invites ?? []).filter((i) => checked.has(i.evaluatorId) && i.status !== "withdrawn").map((i) => i.evaluatorId);
+    const ok = await confirm({
+      title: "초청 메일 보내기",
+      confirmText: "보내기",
+      message: `선택한 ${ids.length}명에게 초청 메일을 보냅니다. 이미 보낸 위원에게는 다시 발송됩니다.`,
+    });
+    if (!ok) return;
+    setSending(true);
+    try {
+      const r = await api<{ results: NonNullable<typeof sendResults> }>(`/api/admin/evaluations/${evaluation.id}/invites/send`, {
+        method: "POST",
+        json: { evaluatorIds: ids },
+      });
+      const sent = r.results.filter((x) => x.status === "sent").length;
+      toast(`초청 메일 ${sent}건을 보냈습니다.${r.results.length - sent ? ` 보내지 못한 위원 ${r.results.length - sent}명` : ""}`, sent === r.results.length ? "ok" : "bad");
+      setSendResults(r.results.filter((x) => x.status !== "sent"));
+      setChecked(new Set());
+      await refresh();
+    } catch (e) {
+      toast(errMsg(e), "bad");
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function bulkSent() {
     const targets = (invites ?? []).filter((i) => checked.has(i.evaluatorId) && i.status === "pending");
     for (const inv of targets) {
@@ -330,6 +373,14 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
 
       <FollowupBanner evaluation={evaluation} onRan={refresh} />
 
+      {sendResults && sendResults.length > 0 && (
+        <div className="notice warn stack" style={{ gap: 4 }}>
+          <div className="row between"><b>메일을 보내지 못한 위원 ({sendResults.length}명)</b><button className="btn sm ghost" onClick={() => setSendResults(null)}>닫기</button></div>
+          {sendResults.map((r) => <div key={r.name} className="small">{r.name}: {r.detail}</div>)}
+          <div className="small muted">&lsquo;메일 보내기&rsquo;를 눌러 메일 앱으로 직접 보내실 수 있습니다.</div>
+        </div>
+      )}
+
       {showTpl && (
         <div className="card">
           <div className="card-head"><h2>초청 메일 양식</h2><span className="small muted">평가별로 저장됩니다</span></div>
@@ -341,6 +392,9 @@ function Invites({ evaluation }: { evaluation: EvalWithCounts }) {
         <div className="card-head">
           <h2>초청 대상 {invites ? `(${invites.length}명)` : ""}</h2>
           <div className="row">
+            {checked.size > 0 && !locked && meta?.email.configured && (
+              <button className="btn sm primary" disabled={sending} onClick={bulkEmail}>{sending ? "보내는 중…" : `선택한 ${checked.size}명에게 메일 보내기`}</button>
+            )}
             {pendingChecked > 0 && !locked && <button className="btn sm" onClick={bulkSent}>선택한 {pendingChecked}명 발송 완료 표시</button>}
             <Link className="btn sm" href={`/admin/priority?e=${evaluation.id}`}>+ 초청 대상 추가</Link>
           </div>

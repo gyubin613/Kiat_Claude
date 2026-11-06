@@ -22,5 +22,6 @@
 - 조건부 참석은 관리자가 '수락'한 경우에만 확정 후보 — 집계·확정·후속 안내 모두 `summary.ts`의 `isConfirmable`/`isConditionPending`/`isDeclined`를 사용
 - 평가위원 명단은 평가별(`roster:{평가id}`). 위원 레코드도 평가별 복사본이며 `repo.ts`의 명단 함수는 모두 평가 id를 받는다. 다른 평가 명단의 위원은 초청 불가
 - 학력은 이해관계 확인용 표시이며 가중치에는 해외 대학 여부만 반영
+- 메일 실제 발송은 `mailer.ts`(서버 전용, SMTP 우선·Resend)만 사용. 위원 대상 발송은 `deliver()`로 허용목록(EMAIL_ALLOWED_RECIPIENTS) 확인. `email.ts`는 화면 공용(양식·mailto)이라 nodemailer를 import하지 않는다
 - 우선순위 점수는 "참고자료" — 예측·보증 표현 금지
 - 비밀값은 환경변수로만. 실제 개인정보·내부자료를 테스트 데이터나 이슈에 넣지 않는다

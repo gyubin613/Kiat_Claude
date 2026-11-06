@@ -69,7 +69,7 @@ function FollowupEditor({ value: f, onChange }: { value: FollowupSettings; onCha
             <label className="row small"><input type="checkbox" checked={f.onDecline} onChange={(e) => set({ onDecline: e.target.checked })} /> &lsquo;참석 불가&rsquo; 회신이 오면 기간과 관계없이 바로 다음 순위 위원에게 안내</label>
             <label className="row small"><input type="checkbox" checked={f.autoSend} onChange={(e) => set({ autoSend: e.target.checked })} /> 초청 메일까지 자동 발송</label>
             {f.autoSend && !meta?.email.configured && (
-              <div className="notice warn small">이메일 발송 서비스가 설정되지 않아 지금은 다음 순위 위원을 <b>초청 대상에 추가만</b> 하고, 초청 메일 화면에 &lsquo;발송 필요&rsquo;로 표시합니다.</div>
+              <div className="notice warn small">메일 설정 전이라 지금은 다음 순위 위원을 <b>초청 대상에 추가만</b> 하고, 초청 메일 화면에 &lsquo;발송 필요&rsquo;로 표시합니다.</div>
             )}
           </div>
         )}

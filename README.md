@@ -55,6 +55,22 @@ npm run dev
 
 > Redis 없이 Vercel에 배포하면 서버 인스턴스마다 데이터가 따로 저장되어 화면이 어긋날 수 있습니다. 상단에 "시연 모드" 경고가 보이면 Redis를 연결하세요.
 
+### 메일 실제 발송
+
+관리자 화면 왼쪽 **메일 설정** 메뉴에서 현재 상태 확인과 시험 발송을 할 수 있습니다.
+
+| 변수 | 예 | 설명 |
+|---|---|---|
+| `SMTP_HOST` | `smtp.naver.com` | 메일 계정의 보내는 메일 서버 (Gmail `smtp.gmail.com`) |
+| `SMTP_PORT` | `465` | 465(SSL) 또는 587(STARTTLS) |
+| `SMTP_USER` | `id@naver.com` | 전체 메일 주소 |
+| `SMTP_PASS` | (앱 비밀번호) | 네이버: 2단계 인증 → 애플리케이션 비밀번호. 메일 환경설정에서 IMAP/SMTP 사용 켜기 |
+| `EMAIL_FROM_NAME` | `기술평가팀` | 받는 사람에게 보이는 이름 |
+| `EMAIL_ALLOWED_RECIPIENTS` | `me@naver.com,@example.org` | 위원에게 보낼 수 있는 주소. `*`는 모두 허용 (기관 승인 후) |
+| `ADMIN_NOTIFY_EMAIL` | | 문의 알림 + 답장 받을 주소 |
+
+Resend를 쓸 경우 `RESEND_API_KEY`, `EMAIL_FROM` (발신 도메인 인증 필요). SMTP가 설정되어 있으면 SMTP가 우선입니다.
+
 ### 무응답 자동 후속 안내 스케줄러
 
 | 방식 | 주기 | 설정 |

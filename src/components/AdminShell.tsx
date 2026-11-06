@@ -12,7 +12,17 @@ export type EvalWithCounts = Evaluation & { counts: Counts; unread: number; ques
 export type Meta = {
   storage: "redis" | "memory";
   devPassword: boolean;
-  email: { configured: boolean; from: string | null; allowList: string[] };
+  email: {
+    configured: boolean;
+    provider: "smtp" | "resend" | null;
+    from: string | null;
+    fromName: string | null;
+    replyTo: string | null;
+    allowList: string[];
+    allowAll: boolean;
+    notify: string | null;
+  };
+  cron: boolean;
 };
 
 type Ctx = {
@@ -198,6 +208,10 @@ function Shell({ children }: { children: ReactNode }) {
           </Link>
           <Link href={"/admin/calendar" + q} className={`nav-item ${pathname.startsWith("/admin/calendar") ? "active" : ""}`}>
             평가 캘린더
+          </Link>
+          <Link href={"/admin/settings" + q} className={`nav-item ${pathname.startsWith("/admin/settings") ? "active" : ""}`}>
+            메일 설정
+            {meta && !meta.email.configured && <span className="nav-count warn" title="메일 발송 설정 전">!</span>}
           </Link>
           <div className="sidebar-foot">
             {meta && (

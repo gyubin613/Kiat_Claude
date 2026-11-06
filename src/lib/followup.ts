@@ -6,7 +6,8 @@ export function cronBaseUrl(fallback?: string) {
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL) return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   return fallback ?? "http://localhost:3000";
 }
-import { canAutoSend, deliver, renderTemplate } from "./email";
+import { renderTemplate } from "./email";
+import { canAutoSend, deliver } from "./mailer";
 import { rankEvaluators } from "./scoring";
 import { isDeclined } from "./summary";
 import { followupOf, weightsOf, type Evaluation, type Invite } from "./types";
@@ -94,7 +95,7 @@ export async function runFollowupFor(evalId: string, baseUrl: string, now = new 
         if (r.status === "sent") await applyInviteAction(evalId, p.id, { type: "markSent", via: "email", detail: `자동 · ${p.email}` });
         invited.push({ name: p.name, sent: r.status === "sent", detail: r.detail });
       } else {
-        invited.push({ name: p.name, sent: false, detail: f.autoSend ? "발송 서비스 미설정 또는 허용목록 외 — 수동 발송 필요" : "자동 발송 꺼짐 — 수동 발송 필요" });
+        invited.push({ name: p.name, sent: false, detail: f.autoSend ? "메일 설정 전이거나 발송 허용 주소가 아님 — 직접 발송 필요" : "자동 발송 꺼짐 — 수동 발송 필요" });
       }
     }
   }

@@ -55,3 +55,9 @@ export function normalizeEmail(email: string) {
 export function normalizeKey(s: string) {
   return s.replace(/\s+/g, "").toLowerCase();
 }
+
+/** 메일 발송 허용목록 확인 (주소 · @도메인 · '*' 전체 허용) — 서버·화면 공용 */
+export function recipientAllowed(email: string, allowList: string[]) {
+  const e = email.trim().toLowerCase();
+  return allowList.some((a) => a === "*" || (a.startsWith("@") ? e.endsWith(a) : e === a));
+}
