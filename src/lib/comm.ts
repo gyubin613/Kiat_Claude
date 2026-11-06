@@ -1,7 +1,8 @@
 // 위원 소통: 1:1 문의·답변 스레드, 전체/대상별 안내사항
 import { kv } from "./store";
 import { AppError, getEvaluation, getEvaluator, K, listInvites, resolveToken, updateWithRetry } from "./repo";
-import { adminNotifyMail, announcementMail, deliver, replyMail } from "./email";
+import { adminNotifyMail, announcementMail, replyMail } from "./email";
+import { deliver } from "./mailer";
 import { pendingQuestion, type Announcement, type AnnouncementAudience, type AnnouncementDoc, type Evaluator, type Message, type Thread } from "./types";
 import { newId, nowIso } from "./util";
 import { audienceOfClient as audienceOf } from "./summary";
@@ -83,13 +84,13 @@ export async function postEvaluatorMessage(token: string, body: string, baseUrl:
  * 조건부 참석 회신의 '조건·문의사항'을 문의함에 등록한다.
  * 회신 제출 직후 호출되므로 연속 전송 제한을 적용하지 않는다.
  */
-export async function postConditionMessage(evalId: string, evaluatorId: string, note: string, baseUrl: string) {
+export async function postConditionMessage(evalId: string, evaluatorId: string, note: string, baseUrl: string, opts: { notify?: boolean } = {}) {
   const [evaluation, evaluator] = await Promise.all([getEvaluation(evalId), getEvaluator(evaluatorId)]);
   await ensureThread(evalId, evaluatorId);
   const msg: Message = { id: newId("m_"), from: "evaluator", kind: "condition", body: note, at: nowIso() };
   const t = await updateWithRetry<Thread>(K.thread(evalId, evaluatorId), (cur) => append(cur, msg), "문의");
   const notifyTo = process.env.ADMIN_NOTIFY_EMAIL;
-  if (notifyTo)
+  if (notifyTo && opts.notify !== false)
     await deliver(notifyTo, {
       subject: `[조건부 참석 문의] ${evaluation.name} - ${evaluator.name} 위원`,
       body: `${evaluator.name}(${evaluator.org || "소속 미입력"}) 위원이 조건부 참석으로 회신했습니다.\n\n${note}\n\n답변·검토하기: ${baseUrl}/admin/responses?e=${evalId}`,

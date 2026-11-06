@@ -1,4 +1,4 @@
-import type { EmailTemplate, Evaluation, Evaluator, MailResult } from "./types";
+import type { EmailTemplate, Evaluation, Evaluator } from "./types";
 import { formatDateKo, formatSlot } from "./util";
 
 export const PLACEHOLDERS = [
@@ -62,58 +62,6 @@ export function mailtoUrl(to: string, mail: EmailTemplate) {
   return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(mail.subject)}&body=${encodeURIComponent(
     mail.body,
   )}`;
-}
-
-// ---------- 외부 발송 서비스(Resend) 연동: 시험 발송 단계 ----------
-
-export function emailServiceStatus() {
-  const configured = Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
-  const allow = (process.env.EMAIL_ALLOWED_RECIPIENTS || "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return { configured, from: process.env.EMAIL_FROM || null, allowList: allow };
-}
-
-/** 수신자 제한: 허용목록이 비어 있으면 아무에게도 직접 발송하지 않는다(시험 발송 전용). */
-export function recipientAllowed(email: string, allowList: string[]) {
-  const e = email.trim().toLowerCase();
-  return allowList.some((a) => (a.startsWith("@") ? e.endsWith(a) : e === a));
-}
-
-export async function sendViaResend(to: string, mail: EmailTemplate): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
-  const { configured, from } = emailServiceStatus();
-  if (!configured || !from) return { ok: false, error: "이메일 발송 서비스가 설정되지 않았습니다." };
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [to], subject: mail.subject, text: mail.body }),
-    });
-    const data = (await res.json().catch(() => ({}))) as { id?: string; message?: string };
-    if (!res.ok) return { ok: false, error: data.message || `발송 실패 (HTTP ${res.status})` };
-    return { ok: true, id: data.id || "" };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : "발송 중 오류가 발생했습니다." };
-  }
-}
-
-/**
- * 공통 발송 함수 — 예외를 던지지 않고 결과만 반환한다.
- * 발송 서비스 미설정·허용목록 밖 주소는 'skipped' (관리자가 수동 발송하도록 안내)
- */
-export async function deliver(to: string | null | undefined, mail: EmailTemplate): Promise<MailResult> {
-  const st = emailServiceStatus();
-  if (!to) return { status: "skipped", detail: "이메일 미등록" };
-  if (!st.configured) return { status: "skipped", detail: "발송 서비스 미설정" };
-  if (!recipientAllowed(to, st.allowList)) return { status: "skipped", detail: "발송 허용목록 외 주소" };
-  const r = await sendViaResend(to, mail);
-  return r.ok ? { status: "sent", detail: to } : { status: "failed", detail: r.error };
-}
-
-export function canAutoSend(to: string | null | undefined) {
-  const st = emailServiceStatus();
-  return Boolean(to && st.configured && recipientAllowed(to, st.allowList));
 }
 
 const head = (e: Pick<Evaluation, "department" | "name">) => `${e.department ? `[${e.department}] ` : ""}${e.name}`;

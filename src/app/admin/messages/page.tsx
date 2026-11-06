@@ -145,7 +145,7 @@ function Conversation({
         <div className="row between">
           <label className="row small">
             <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} />
-            위원에게 메일로도 보내기 {!meta?.email.configured && <span className="faint">(발송 서비스 미설정: 메일 앱으로 열기 제공)</span>}
+            위원에게 메일로도 보내기 {!meta?.email.configured && <span className="faint">(메일 설정 전: 메일 앱으로 열기 제공)</span>}
           </label>
           <button className="btn primary" disabled={busy || !text.trim()} onClick={send}>{busy ? "보내는 중…" : mode === "question" ? "확인 요청 보내기" : "답변 보내기"}</button>
         </div>
