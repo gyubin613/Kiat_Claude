@@ -20,6 +20,7 @@ type Draft = {
   slots: SlotDraft[];
   followup: FollowupSettings;
   conflictKeywords: string;
+  recruitMode: "manual" | "auto";
 };
 
 const emptyDraft = (): Draft => ({
@@ -32,6 +33,7 @@ const emptyDraft = (): Draft => ({
   slots: [{ date: "", start: "10:00", end: "17:00", place: "" }],
   followup: { ...DEFAULT_FOLLOWUP },
   conflictKeywords: "",
+  recruitMode: "manual",
 });
 
 function addDays(date: string, n: number) {
@@ -41,10 +43,53 @@ function addDays(date: string, n: number) {
   return d.toISOString().slice(0, 10);
 }
 
-function FollowupEditor({ value: f, onChange }: { value: FollowupSettings; onChange: (f: FollowupSettings) => void }) {
+function RecruitModeOption({ value, running, onChange }: { value: "manual" | "auto"; running: boolean; onChange: (m: "manual" | "auto") => void }) {
+  const { meta } = useAdmin();
+  return (
+    <div className="card" style={{ boxShadow: "none" }}>
+      <div className="card-body stack" style={{ gap: 10 }}>
+        <h3>섭외 방식</h3>
+        <div className="seg" role="radiogroup" aria-label="섭외 방식">
+          <button type="button" className={value === "manual" ? "on" : ""} disabled={running} onClick={() => onChange("manual")} role="radio" aria-checked={value === "manual"}>직접 골라 초청</button>
+          <button type="button" className={value === "auto" ? "on" : ""} disabled={running} onClick={() => onChange("auto")} role="radio" aria-checked={value === "auto"}>자동 섭외 (순서대로 자동 발송)</button>
+        </div>
+        <p className="small muted">
+          {value === "auto"
+            ? "우선순위 화면에서 위원 순서를 끌어서 정하고 [자동 섭외 시작]을 누르면, 배석 인원만큼 앞 순서부터 초청 메일이 바로 나갑니다. 불참 회신이 오면 즉시, 정한 시간 동안 회신이 없으면 다음 순서 위원에게 자동으로 보냅니다."
+            : "우선순위 화면에서 위원을 골라 초청 대상에 넣고, 초청 메일 화면에서 직접 보냅니다."}
+        </p>
+        {running && <span className="small" style={{ color: "var(--warn)" }}>자동 섭외 진행 중에는 방식을 바꿀 수 없습니다. 우선순위 화면에서 먼저 중지해 주세요.</span>}
+        {value === "auto" && !meta?.email.configured && (
+          <div className="notice warn small">메일 설정이 아직 없습니다. 자동 섭외는 메일이 실제로 나가야 의미가 있으니, 시작 전에 메일 설정을 마쳐 주세요.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FollowupEditor({ value: f, auto, onChange }: { value: FollowupSettings; auto?: boolean; onChange: (f: FollowupSettings) => void }) {
   const { meta } = useAdmin();
   const set = (p: Partial<FollowupSettings>) => onChange({ ...f, ...p });
   const preset = [24, 48, 72].includes(Number(f.hours));
+  if (auto)
+    return (
+      <div className="card" style={{ boxShadow: "none" }}>
+        <div className="card-body stack" style={{ gap: 10 }}>
+          <h3>회신이 없을 때 다음 순서로 넘어가는 시간</h3>
+          <div className="row">
+            {[24, 48, 72].map((h) => (
+              <button key={h} type="button" className={`btn sm ${Number(f.hours) === h ? "primary" : ""}`} onClick={() => set({ hours: h })}>
+                {h / 24}일({h}시간)
+              </button>
+            ))}
+            <span className="small muted">직접 입력</span>
+            <input className="input" style={{ width: 90 }} type="number" min={1} max={336} value={f.hours} onChange={(e) => set({ hours: e.target.value as unknown as number })} aria-label="회신 대기 시간" />
+            <span className="small">시간 {!preset && f.hours ? `(약 ${(Number(f.hours) / 24).toFixed(1)}일)` : ""}</span>
+          </div>
+          <p className="small muted">불참 회신은 시간과 관계없이 바로 다음 순서로 넘어갑니다.</p>
+        </div>
+      </div>
+    );
   return (
     <div className="card" style={{ boxShadow: "none" }}>
       <div className="card-body stack" style={{ gap: 10 }}>
@@ -128,6 +173,7 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
           slots: initial.slots.map((s: Slot) => ({ ...s })),
           followup: followupOf(initial),
           conflictKeywords: (initial.conflictKeywords ?? []).join(", "),
+          recruitMode: initial.recruitMode ?? "manual",
         }
       : emptyDraft(),
   );
@@ -162,7 +208,15 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
         const changed: Record<string, unknown> = {};
         (Object.keys(payload) as (keyof typeof payload)[]).forEach((k) => {
           const before =
-            k === "slots" ? initial.slots : k === "followup" ? followupOf(initial) : k === "conflictKeywords" ? initial.conflictKeywords ?? [] : initial[k];
+            k === "slots"
+              ? initial.slots
+              : k === "followup"
+                ? { ...DEFAULT_FOLLOWUP, ...(initial.followup ?? {}) }
+                : k === "conflictKeywords"
+                  ? initial.conflictKeywords ?? []
+                  : k === "recruitMode"
+                    ? initial.recruitMode ?? "manual"
+                    : initial[k];
           if (JSON.stringify(before) !== JSON.stringify(payload[k])) changed[k] = payload[k];
         });
         if (!Object.keys(changed).length) {
@@ -249,7 +303,8 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
           </div>
         </div>
         {!initial && <RosterOption value={roster} onChange={setRoster} />}
-        <FollowupEditor value={d.followup} onChange={(f) => set("followup", f)} />
+        <RecruitModeOption value={d.recruitMode} running={!!initial?.autoRunning} onChange={(m) => set("recruitMode", m)} />
+        <FollowupEditor value={d.followup} auto={d.recruitMode === "auto"} onChange={(f) => set("followup", f)} />
         <div>
           <div className="row between" style={{ marginBottom: 8 }}>
             <h3>후보 일정 및 장소</h3>
@@ -364,7 +419,7 @@ export default function EvaluationsPage() {
         <div className="card table-wrap">
           <table className="table">
             <thead>
-              <tr><th>평가명</th><th>상태</th><th>회신 기한</th><th style={{ minWidth: 170 }}>확보 인원</th><th>자동 후속</th><th></th></tr>
+              <tr><th>평가명</th><th>상태</th><th>회신 기한</th><th style={{ minWidth: 170 }}>확보 인원</th><th>섭외 방식</th><th></th></tr>
             </thead>
             <tbody>
               {evaluations.map((e) => {
@@ -387,7 +442,15 @@ export default function EvaluationsPage() {
                         <div className="bar"><span className="yes" style={{ width: `${Math.min(100, (got / e.seats) * 100)}%` }} /></div>
                       </div>
                     </td>
-                    <td className="small">{f.enabled ? `${f.hours}시간` : <span className="faint">사용 안 함</span>}</td>
+                    <td className="small">
+                      {e.recruitMode === "auto" ? (
+                        <span className={`badge ${e.autoRunning ? "ok" : "info"}`}>자동 섭외{e.autoRunning ? " 진행 중" : " (시작 전)"}</span>
+                      ) : f.enabled ? (
+                        `${f.hours}시간 후 다음 순위`
+                      ) : (
+                        <span className="faint">수동</span>
+                      )}
+                    </td>
                     <td className="nowrap" style={{ textAlign: "right" }}>
                       {!isCurrent && <button className="btn sm" onClick={() => setCurrentId(e.id)}>선택</button>}{" "}
                       <RowMenu

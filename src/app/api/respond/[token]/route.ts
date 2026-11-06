@@ -2,6 +2,8 @@ import { baseUrl, body, handle, json } from "@/lib/api";
 import { resolveToken, submitResponse } from "@/lib/repo";
 import { getThread, listAnnouncements, markReadByEvaluator, postConditionMessage } from "@/lib/comm";
 import { pendingQuestion } from "@/lib/types";
+import { isDeclined } from "@/lib/summary";
+import { afterDecline } from "@/lib/followup";
 import { responseInput } from "@/lib/validate";
 
 type Ctx = { params: Promise<{ token: string }> };
@@ -55,5 +57,7 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
   if (r?.attendance === "conditional" && (before?.attendance !== "conditional" || before.note !== r.note)) {
     await postConditionMessage(inv.evaluationId, inv.evaluatorId, r.note, baseUrl(req));
   }
+  // 불참 회신 → (자동 섭외·불참 시 즉시 안내 설정이면) 바로 다음 순서 위원에게 발송
+  if (isDeclined(inv)) await afterDecline(inv.evaluationId, baseUrl(req));
   return json(await view(token));
 });

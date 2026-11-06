@@ -232,6 +232,21 @@ function FollowupBanner({ evaluation, onRan }: { evaluation: EvalWithCounts; onR
   const [busy, setBusy] = useState(false);
   const f = followupOf(evaluation);
   if (evaluation.status === "finalized") return null;
+  if (evaluation.recruitMode === "auto")
+    return (
+      <div className={`notice ${evaluation.autoRunning ? "ok" : "warn"} row between`}>
+        <span>
+          {evaluation.autoRunning ? (
+            <>
+              <b>자동 섭외 진행 중</b> — 불참 회신이 오면 즉시, {f.hours}시간 무응답이면 다음 순서 위원에게 메일을 보냅니다.
+            </>
+          ) : (
+            <>자동 섭외로 설정된 평가입니다. 우선순위·섭외 화면에서 순서를 정하고 시작해 주세요.</>
+          )}
+        </span>
+        <a className="btn sm" href={`/admin/priority?e=${evaluation.id}`}>{evaluation.autoRunning ? "순서 보기" : "순서 정하기"}</a>
+      </div>
+    );
   async function run() {
     setBusy(true);
     try {

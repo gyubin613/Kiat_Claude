@@ -90,3 +90,20 @@ export function rankEvaluators<T extends Evaluator>(list: T[], weights: Weights 
     )
     .map((ev, i) => ({ ...ev, rank: i + 1 }));
 }
+
+/**
+ * 자동 섭외 순서: 담당자가 끌어서 정한 순서(autoQueue)를 먼저, 그 뒤에 아직 순서에 없는 위원을 점수순으로.
+ * 제외(autoExcluded)한 위원은 빠진다. (서버·화면 공용)
+ */
+export function autoOrder<T extends Evaluator>(
+  roster: T[],
+  e: { autoQueue?: string[]; autoExcluded?: string[] },
+  weights: Weights | number,
+): Ranked<T>[] {
+  const ranked = rankEvaluators(roster, weights);
+  const byId = new Map(ranked.map((v) => [v.id, v]));
+  const excluded = new Set(e.autoExcluded ?? []);
+  const queued = (e.autoQueue ?? []).filter((id) => byId.has(id) && !excluded.has(id));
+  const seen = new Set(queued);
+  return [...queued.map((id) => byId.get(id)!), ...ranked.filter((v) => !seen.has(v.id) && !excluded.has(v.id))];
+}

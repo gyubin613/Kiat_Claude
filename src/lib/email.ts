@@ -55,7 +55,9 @@ export function renderTemplate(
     회신링크: link,
   };
   const fill = (s: string) => s.replace(/\{\{\s*([^}\s]+)\s*\}\}/g, (m, key) => (key in values ? values[key] : m));
-  return { subject: fill(tpl.subject).replace(/\s+/g, " ").trim(), body: fill(tpl.body) };
+  // 빈 항목으로 생기는 '[]', '()' 는 지운다 (예: 담당부서 미입력)
+  const tidy = (s: string) => s.replace(/\[\s*\]|\(\s*\)/g, "").replace(/\s+/g, " ").trim();
+  return { subject: tidy(fill(tpl.subject)), body: fill(tpl.body) };
 }
 
 export function mailtoUrl(to: string, mail: EmailTemplate) {

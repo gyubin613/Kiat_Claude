@@ -2,6 +2,7 @@ import { z } from "zod";
 import { baseUrl, body, handle, json } from "@/lib/api";
 import { applyInviteAction, reviewCondition } from "@/lib/repo";
 import { postAdminMessage } from "@/lib/comm";
+import { afterDecline } from "@/lib/followup";
 
 type Ctx = { params: Promise<{ id: string; evaluatorId: string }> };
 
@@ -34,7 +35,10 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
           : `제시하신 참석 조건은 이번 평가 운영상 반영이 어렵게 되었습니다. 양해 부탁드립니다.${a.note ? `\n\n${a.note}` : ""}`;
       message = await postAdminMessage(id, evaluatorId, text, true, baseUrl(req));
     }
+    if (a.decision === "rejected") await afterDecline(id, baseUrl(req));
     return json({ invite, email: message?.email ?? null, link: message?.link ?? null });
   }
-  return json({ invite: await applyInviteAction(id, evaluatorId, a) });
+  const invite = await applyInviteAction(id, evaluatorId, a);
+  if (a.type === "withdraw") await afterDecline(id, baseUrl(req));
+  return json({ invite });
 });
