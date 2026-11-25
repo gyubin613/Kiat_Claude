@@ -111,17 +111,23 @@ const errors = [];
   await page.waitForSelector("table.table tbody tr");
   await page.waitForSelector("text=해외경험");
   await page.waitForSelector("text=/이해관계 확인 필요/");
+  await page.waitForSelector("text=위원 순환");
+  await page.waitForSelector("th:has-text('K-PASS 평가')");
+  await page.waitForSelector("text=국제기술협력단");
   await page.waitForTimeout(300);
   await shot("04-priority");
   const top0 = await page.locator("tbody tr").first().innerText();
   await page.locator("input[aria-label='해외경험 가중치']").fill("100");
   await page.locator("input[aria-label='과거 이력 가중치']").fill("0");
-  await page.locator("input[aria-label='관리자 선호도 가중치']").fill("0");
+  await page.locator("input[aria-label='위원 순환 가중치']").fill("0");
+  // 관리자 선호도는 이전 방식 평가에만 보임
+  const pref = page.locator("input[aria-label='관리자 선호도 (이전 방식) 가중치']");
+  if (await pref.count()) await pref.fill("0");
   await page.waitForTimeout(200);
   const top1 = await page.locator("tbody tr").first().innerText();
   if (!/해외/.test(top1)) throw new Error("해외경험 가중치 100%인데 1순위가 해외경험 없음: " + top1.slice(0, 80));
   if (top0 === top1) console.log("  (가중치 변경 전후 1순위 동일)");
-  step("가중치에 해외경험 반영 · 학력 표시 · 이해관계 표시");
+  step("가중치에 해외경험 반영 · 위원 순환 · K-PASS 정보 · 학력 · 이해관계 표시");
   await page.locator("tbody tr input[type=checkbox]:not([disabled])").first().check();
   await page.click("button:has-text('초청 대상에 추가')");
   await page.waitForSelector("text=초청 대상에 추가했습니다");
@@ -320,10 +326,10 @@ const errors = [];
   await shot("14-roster");
   step(`이전 평가에서 일괄 불러오기 (명단 ${n}명) · 명단 엑셀 다운로드`);
 
-  // 자동 섭외: 등록 시 선택 → 끌어서 순서 조정 → 시작 → 불참 시 바로 다음 순서
+  // 순차 자동 초청: 등록 시 선택 → 끌어서 순서 조정 → 시작 → 불참 시 바로 다음 순서
   await page.click("a.nav-item:has-text('평가 등록')");
   await page.click("button:has-text('새 평가 등록')");
-  await page.fill(".modal input[placeholder^='예) 2026년']", "E2E 자동 섭외 평가");
+  await page.fill(".modal input[placeholder^='예) 2026년']", "E2E 순차 자동 초청 평가");
   await page.locator(".modal input[type=date]").first().fill("2030-01-01");
   await page.fill(".modal input[aria-label='1번 일정 날짜']", "2030-01-10");
   await page.fill(".modal input[min='1'][max='50']", "2");
@@ -331,13 +337,13 @@ const errors = [];
   const s3 = page.locator(".modal select[aria-label='불러올 평가']");
   const o3 = await s3.locator("option").evaluateAll((os) => os.map((o) => [o.value, o.text]));
   await s3.selectOption(o3.find((o) => o[1].includes("지역혁신"))[0]);
-  await page.click(".modal button[role=radio]:has-text('자동 섭외')");
+  await page.click(".modal button[role=radio]:has-text('순차 자동 초청')");
   await page.waitForSelector(".modal >> text=회신이 없을 때 다음 순서로 넘어가는 시간");
   await page.click(".modal-foot button:has-text('저장')");
   await page.waitForURL(/\/admin\/evaluators\?e=/);
   await page.waitForSelector("table.table tbody tr");
   await page.click("a.nav-item:has-text('우선순위·섭외')");
-  await page.waitForSelector("text=자동 섭외 순서");
+  await page.waitForSelector("text=순차 자동 초청 순서");
   const names = async () => page.locator(".q-row .who b").allInnerTexts();
   const before = await names();
   await page.dragAndDrop(`[data-testid='queue-${before[2]}']`, `[data-testid='queue-${before[0]}']`);
@@ -348,19 +354,19 @@ const errors = [];
   if (order[2] !== afterDrag[1]) throw new Error("↓ 버튼 순서 변경 실패");
   await page.waitForSelector("text=/여기까지 시작하자마자 메일 발송/");
   await shot("15-auto-queue");
-  step(`자동 섭외 순서 조정 (끌어서 놓기·↓): ${order.slice(0, 3).join(" → ")}`);
+  step(`순차 자동 초청 순서 조정 (끌어서 놓기·↓): ${order.slice(0, 3).join(" → ")}`);
 
-  await page.click("button:has-text('자동 섭외 시작')");
+  await page.click("button:has-text('순차 자동 초청 시작')");
   await page.click(".modal-foot button:has-text('시작')");
-  await page.waitForSelector("text=/자동 섭외를 시작했습니다/");
+  await page.waitForSelector("text=/순차 자동 초청을 시작했습니다/");
   await page.waitForSelector(".auto-status .badge:has-text('진행 중')");
   await page.click("a.nav-item:has-text('초청 메일')");
-  await page.waitForSelector("text=자동 섭외 진행 중");
+  await page.waitForSelector("text=순차 자동 초청 진행 중");
   const invited = await page.locator("tbody tr .who b").allInnerTexts();
   const clean = (t) => t.replace(/\s*\d+차$/, "").trim();
   if (invited.length !== 2 || clean(invited[0]) !== order[0] || clean(invited[1]) !== order[1])
     throw new Error(`시작 시 앞 순서 2명이 초청돼야 함: ${invited}`);
-  step("자동 섭외 시작 → 앞 순서 2명 즉시 초청");
+  step("순차 자동 초청 시작 → 앞 순서 2명 즉시 초청");
 
   // 1순위 위원이 불참 → 즉시 3순위 위원 초청
   await page.locator(`tbody tr:has-text('${order[0]}') button:has-text('메일')`).click();

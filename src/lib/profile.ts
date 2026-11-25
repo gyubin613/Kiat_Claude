@@ -35,6 +35,15 @@ export function overseasTags(v: Partial<Edu>) {
   return tags;
 }
 
+/** K-PASS 정보·위원 구분 표시 (기존/신규, 국제기술협력단, 제재) */
+export function poolTags(v: Partial<Pick<Evaluator, "pastAttended" | "intlPool" | "sanction">>) {
+  const tags: { label: string; cls: string; title?: string }[] = [];
+  tags.push((v.pastAttended ?? 0) > 0 ? { label: "기존", cls: "", title: "우리 사업 평가 참여 이력 있음" } : { label: "신규", cls: "ok", title: "우리 사업 평가 참여 이력 없음" });
+  if (v.intlPool) tags.push({ label: "국제기술협력단", cls: "info", title: "국제기술협력단 평가위원" });
+  if (v.sanction) tags.push({ label: "제재 확인 필요", cls: "bad", title: v.sanction });
+  return tags;
+}
+
 export function educationMissing(v: Partial<Edu>) {
   return !v.bachelorSchool && !v.finalSchool;
 }

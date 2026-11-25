@@ -71,6 +71,11 @@ export async function seedDemoData(baseUrl = "http://localhost:3000") {
         })(),
         pastInvited: invited,
         pastAttended: attended,
+        // K-PASS 정보 (난수를 쓰지 않아 다른 가상 값에 영향 없음)
+        techFields: `${FIELDS[(i * 5) % FIELDS.length]} / ${FIELDS[(i * 5 + 3) % FIELDS.length]}`,
+        kpassEvalCount: i % 6 === 5 ? null : (i * 7) % 26,
+        intlPool: i % 4 === 0,
+        sanction: i === 22 ? "2026-01-01~2027-06-30 (가상) 제재 예시" : "",
         preference: i % 5 === 4 ? null : 1 + Math.floor(rand() * 5),
         note: i === 13 ? "이메일 확인 필요" : i % 9 === 0 ? "오전 일정 선호" : "",
         ...(() => {

@@ -51,16 +51,16 @@ function RecruitModeOption({ value, running, onChange }: { value: "manual" | "au
         <h3>섭외 방식</h3>
         <div className="seg" role="radiogroup" aria-label="섭외 방식">
           <button type="button" className={value === "manual" ? "on" : ""} disabled={running} onClick={() => onChange("manual")} role="radio" aria-checked={value === "manual"}>직접 골라 초청</button>
-          <button type="button" className={value === "auto" ? "on" : ""} disabled={running} onClick={() => onChange("auto")} role="radio" aria-checked={value === "auto"}>자동 섭외 (순서대로 자동 발송)</button>
+          <button type="button" className={value === "auto" ? "on" : ""} disabled={running} onClick={() => onChange("auto")} role="radio" aria-checked={value === "auto"}>순차 자동 초청 (순서대로 자동 발송)</button>
         </div>
         <p className="small muted">
           {value === "auto"
-            ? "우선순위 화면에서 위원 순서를 끌어서 정하고 [자동 섭외 시작]을 누르면, 배석 인원만큼 앞 순서부터 초청 메일이 바로 나갑니다. 불참 회신이 오면 즉시, 정한 시간 동안 회신이 없으면 다음 순서 위원에게 자동으로 보냅니다."
+            ? "우선순위 화면에서 위원 순서를 끌어서 정하고 [순차 자동 초청 시작]을 누르면, 배석 인원만큼 앞 순서부터 초청 메일이 바로 나갑니다. 불참 회신이 오면 즉시, 정한 시간 동안 회신이 없으면 다음 순서 위원에게 자동으로 보냅니다."
             : "우선순위 화면에서 위원을 골라 초청 대상에 넣고, 초청 메일 화면에서 직접 보냅니다."}
         </p>
-        {running && <span className="small" style={{ color: "var(--warn)" }}>자동 섭외 진행 중에는 방식을 바꿀 수 없습니다. 우선순위 화면에서 먼저 중지해 주세요.</span>}
+        {running && <span className="small" style={{ color: "var(--warn)" }}>순차 자동 초청 진행 중에는 방식을 바꿀 수 없습니다. 우선순위 화면에서 먼저 중지해 주세요.</span>}
         {value === "auto" && !meta?.email.configured && (
-          <div className="notice warn small">메일 설정이 아직 없습니다. 자동 섭외는 메일이 실제로 나가야 의미가 있으니, 시작 전에 메일 설정을 마쳐 주세요.</div>
+          <div className="notice warn small">메일 설정이 아직 없습니다. 순차 자동 초청은 메일이 실제로 나가야 의미가 있으니, 시작 전에 메일 설정을 마쳐 주세요.</div>
         )}
       </div>
     </div>
@@ -444,7 +444,7 @@ export default function EvaluationsPage() {
                     </td>
                     <td className="small">
                       {e.recruitMode === "auto" ? (
-                        <span className={`badge ${e.autoRunning ? "ok" : "info"}`}>자동 섭외{e.autoRunning ? " 진행 중" : " (시작 전)"}</span>
+                        <span className={`badge ${e.autoRunning ? "ok" : "info"}`}>순차 자동 초청{e.autoRunning ? " 진행 중" : " (시작 전)"}</span>
                       ) : f.enabled ? (
                         `${f.hours}시간 후 다음 순위`
                       ) : (

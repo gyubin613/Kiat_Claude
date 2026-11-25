@@ -42,7 +42,7 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
         duplicate: dup ? { by: dup.by, name: dup.evaluator.name, org: dup.evaluator.org } : null,
       };
     });
-    return json({ preview, unmatchedHeaders: parsed.unmatchedHeaders });
+    return json({ preview, unmatchedHeaders: parsed.unmatchedHeaders, format: parsed.format, notices: parsed.notices });
   }
   const valid = parsed.rows.filter((r) => r.ok && r.data).map((r) => ({ row: r.row, data: r.data! }));
   const results = await importEvaluators(id, valid, mode);

@@ -5,13 +5,13 @@ import type { EvalWithCounts } from "./AdminShell";
 import { useAdmin } from "./AdminShell";
 import { api, errMsg, useConfirm, useToast } from "./ui";
 import { autoOrder } from "@/lib/scoring";
-import { bachelorText, conflictHits, finalText, overseasTags } from "@/lib/profile";
+import { bachelorText, conflictHits, finalText, overseasTags, poolTags } from "@/lib/profile";
 import { isDeclined } from "@/lib/summary";
-import { DISPLAY_STATE_LABEL, followupOf, inviteDisplayState, STATE_CLASS, weightsOf, type Evaluator, type Invite } from "@/lib/types";
+import { DISPLAY_STATE_LABEL, followupOf, inviteDisplayState, isReturning, STATE_CLASS, weightsOf, type Evaluator, type Invite } from "@/lib/types";
 import { formatDateTime, recipientAllowed } from "@/lib/util";
 
 /**
- * 자동 섭외 순서: 끌어서(또는 ↑↓) 순서를 정하고 [자동 섭외 시작]을 누르면
+ * 순차 자동 초청 순서: 끌어서(또는 ↑↓) 순서를 정하고 [순차 자동 초청 시작]을 누르면
  * 배석 인원만큼 앞 순서부터 바로 메일이 나가고, 불참·무응답이 생기면 다음 순서로 넘어간다.
  */
 export default function AutoQueue({
@@ -58,6 +58,9 @@ export default function AutoQueue({
   const upcoming = order.filter((id) => !invMap.has(id) && !excluded.has(id));
   const nextIds = new Set(upcoming.slice(0, need));
   const noEmail = upcoming.slice(0, evaluation.seats).filter((id) => !byId.get(id)?.email);
+  // 앞 순서(배석 인원만큼)의 기존·신규 위원 구성 — 담당자가 비율을 맞출 때 참고
+  const front = order.filter((id) => !excluded.has(id)).slice(0, evaluation.seats).map((id) => byId.get(id)).filter((v) => !!v);
+  const frontReturning = front.filter(isReturning).length;
   const blocked = upcoming.slice(0, evaluation.seats).filter((id) => {
     const em = byId.get(id)?.email;
     return em && meta?.email.configured && !recipientAllowed(em, meta.email.allowList);
@@ -80,7 +83,7 @@ export default function AutoQueue({
         method: "PATCH",
         json: { autoQueue: order, autoExcluded: [...excluded], version: evaluation.version },
       });
-      if (!quiet) toast("자동 섭외 순서를 저장했습니다.", "ok");
+      if (!quiet) toast("순차 자동 초청 순서를 저장했습니다.", "ok");
       await onChanged();
     } catch (e) {
       toast(errMsg(e), "bad");
@@ -91,7 +94,7 @@ export default function AutoQueue({
   async function start() {
     const n = Math.min(need, upcoming.length);
     const ok = await confirm({
-      title: "자동 섭외 시작",
+      title: "순차 자동 초청 시작",
       confirmText: "시작",
       message: (
         <div className="stack" style={{ gap: 8 }}>
@@ -116,7 +119,7 @@ export default function AutoQueue({
       const inv = r.result?.invited ?? [];
       const ok2 = inv.filter((i) => i.sent).length;
       toast(
-        inv.length ? `자동 섭외를 시작했습니다. ${ok2}명에게 메일을 보냈습니다.${inv.length - ok2 ? ` (보내지 못한 ${inv.length - ok2}명은 초청 메일 화면에서 확인)` : ""}` : "자동 섭외를 시작했습니다. 지금은 보낼 위원이 없습니다.",
+        inv.length ? `순차 자동 초청을 시작했습니다. ${ok2}명에게 메일을 보냈습니다.${inv.length - ok2 ? ` (보내지 못한 ${inv.length - ok2}명은 초청 메일 화면에서 확인)` : ""}` : "순차 자동 초청을 시작했습니다. 지금은 보낼 위원이 없습니다.",
         inv.length && ok2 < inv.length ? "bad" : "ok",
       );
       await onChanged();
@@ -128,11 +131,11 @@ export default function AutoQueue({
   }
 
   async function stop() {
-    if (!(await confirm({ title: "자동 섭외 중지", message: "더 이상 자동으로 메일을 보내지 않습니다. 이미 보낸 초청과 회신은 그대로 유지됩니다.", confirmText: "중지" }))) return;
+    if (!(await confirm({ title: "순차 자동 초청 중지", message: "더 이상 자동으로 메일을 보내지 않습니다. 이미 보낸 초청과 회신은 그대로 유지됩니다.", confirmText: "중지" }))) return;
     setBusy(true);
     try {
       await api(`/api/admin/evaluations/${evaluation.id}/auto`, { method: "POST", json: { action: "stop" } });
-      toast("자동 섭외를 중지했습니다.", "ok");
+      toast("순차 자동 초청을 중지했습니다.", "ok");
       await onChanged();
     } catch (e) {
       toast(errMsg(e), "bad");
@@ -148,7 +151,7 @@ export default function AutoQueue({
       <div className="card-head">
         <div className="auto-status">
           {running && <span className="pulse" aria-hidden />}
-          <h2>자동 섭외 순서</h2>
+          <h2>순차 자동 초청 순서</h2>
           <span className={`badge ${running ? "ok" : ""}`}>{running ? "진행 중" : locked ? "종료" : "시작 전"}</span>
           {running && evaluation.autoStartedAt && <span className="small muted">{formatDateTime(evaluation.autoStartedAt)} 시작 · 발송 {sentCount}명</span>}
         </div>
@@ -157,15 +160,18 @@ export default function AutoQueue({
             <button className="btn sm ghost" disabled={busy} onClick={() => setOrder(autoOrder(evaluators, {}, weights).map((v) => v.id))}>점수순으로 다시 정렬</button>
             {running && dirty && <button className="btn sm" disabled={busy} onClick={() => save()}>순서 저장</button>}
             {running ? (
-              <button className="btn danger" disabled={busy} onClick={stop}>자동 섭외 중지</button>
+              <button className="btn danger" disabled={busy} onClick={stop}>순차 자동 초청 중지</button>
             ) : (
-              <button className="btn primary" disabled={busy || !upcoming.length} onClick={start}>{busy ? "시작하는 중…" : "자동 섭외 시작"}</button>
+              <button className="btn primary" disabled={busy || !upcoming.length} onClick={start}>{busy ? "시작하는 중…" : "순차 자동 초청 시작"}</button>
             )}
           </div>
         )}
       </div>
       <div className="card-body small muted" style={{ paddingBottom: 10 }}>
         위원을 끌어서(또는 ↑↓) 순서를 정하세요. {running ? "순서를 바꾸면 [순서 저장]을 눌러야 다음 발송부터 반영됩니다." : `시작하면 앞 순서 ${evaluation.seats}명에게 바로 메일이 나갑니다.`} 불참 회신이 오면 즉시, {f.hours}시간 무응답이면 다음 순서로 넘어갑니다.
+        {front.length > 0 && (
+          <> 앞 순서 {front.length}명 구성: 기존 위원 {frontReturning}명 · 신규 위원 {front.length - frontReturning}명.</>
+        )}
       </div>
       {(noEmail.length > 0 || blocked.length > 0) && (
         <div className="notice warn small" style={{ margin: "0 20px 12px" }}>
@@ -217,6 +223,9 @@ export default function AutoQueue({
                 <div className="who">
                   <b>{v.name}</b>
                   <span>{v.org}{!v.email && " · 이메일 없음"}</span>
+                  <span className="tags">
+                    {poolTags(v).map((t) => <span key={t.label} className={`badge ${t.cls}`} title={t.title}>{t.label}</span>)}
+                  </span>
                   {hits.length > 0 && <span className="conflict">이해관계 확인 필요</span>}
                 </div>
                 <div className="edu hide-sm">

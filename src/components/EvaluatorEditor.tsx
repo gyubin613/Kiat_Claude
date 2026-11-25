@@ -23,6 +23,10 @@ type FormVals = {
   finalAbroad: string;
   overseasWorkYears: string;
   overseasWorkDetail: string;
+  techFields: string;
+  kpassEvalCount: string;
+  intlPool: string;
+  sanction: string;
 };
 type Key = keyof FormVals;
 
@@ -60,11 +64,20 @@ const SECTIONS: { title: string; fields: Field[] }[] = [
     ],
   },
   {
+    title: "K-PASS 정보",
+    fields: [
+      { key: "techFields", label: "기술분야", full: true, hint: "K-PASS 기술분야 1·2순위 등" },
+      { key: "kpassEvalCount", label: "K-PASS 평가횟수", type: "number", hint: "위원 순환(편중 방지) 점수에 사용. 모르면 비워 두세요" },
+      { key: "intlPool", label: "국제기술협력단 평가위원", options: [["", "미입력"], ["Y", "예"], ["N", "아니오"]] },
+      { key: "sanction", label: "제재(기간·사유)", full: true, hint: "제재 기간 중인 경우만 입력. 초청 전 확인 표시가 붙습니다" },
+    ],
+  },
+  {
     title: "섭외 참고",
     fields: [
-      { key: "pastInvited", label: "과거 초청 횟수", type: "number", hint: "비우면 '이력 없음'으로 중립 점수 적용" },
-      { key: "pastAttended", label: "과거 참여 횟수", type: "number" },
-      { key: "preference", label: "관리자 선호도", hint: "비우면 중립(3점)으로 계산", options: [["", "미입력 (중립)"], ["5", "5 (매우 선호)"], ["4", "4"], ["3", "3"], ["2", "2"], ["1", "1 (비선호)"]] },
+      { key: "pastInvited", label: "과거 초청 횟수", type: "number", hint: "우리 사업 평가 기준. 비우면 '이력 없음'으로 중립 점수 적용" },
+      { key: "pastAttended", label: "과거 참여 횟수", type: "number", hint: "1회 이상이면 '기존 위원'으로 표시" },
+      { key: "preference", label: "관리자 선호도 (이전 방식)", hint: "주관적 항목이라 새 평가에서는 점수에 반영하지 않습니다(가중치 0%)", options: [["", "미입력 (중립)"], ["5", "5 (매우 선호)"], ["4", "4"], ["3", "3"], ["2", "2"], ["1", "1 (비선호)"]] },
       { key: "note", label: "비고", full: true, area: true },
     ],
   },
@@ -89,11 +102,15 @@ const toForm = (v: Partial<Evaluator> | null): FormVals => ({
   finalAbroad: v?.finalAbroad == null ? "" : v.finalAbroad ? "Y" : "N",
   overseasWorkYears: v?.overseasWorkYears == null ? "" : String(v.overseasWorkYears),
   overseasWorkDetail: v?.overseasWorkDetail ?? "",
+  techFields: v?.techFields ?? "",
+  kpassEvalCount: v?.kpassEvalCount == null ? "" : String(v.kpassEvalCount),
+  intlPool: v?.intlPool == null ? "" : v.intlPool ? "Y" : "N",
+  sanction: v?.sanction ?? "",
 });
 
 const toValue = (k: Key, s: string) => {
-  if (k === "pastInvited" || k === "pastAttended" || k === "preference" || k === "overseasWorkYears") return s.trim() === "" ? null : Number(s);
-  if (k === "bachelorAbroad" || k === "finalAbroad") return s === "" ? null : s === "Y";
+  if (k === "pastInvited" || k === "pastAttended" || k === "preference" || k === "overseasWorkYears" || k === "kpassEvalCount") return s.trim() === "" ? null : Number(s);
+  if (k === "bachelorAbroad" || k === "finalAbroad" || k === "intlPool") return s === "" ? null : s === "Y";
   return s.trim();
 };
 

@@ -57,7 +57,7 @@ export const POST = handle(async (req: Request, { params }: Ctx) => {
   if (r?.attendance === "conditional" && (before?.attendance !== "conditional" || before.note !== r.note)) {
     await postConditionMessage(inv.evaluationId, inv.evaluatorId, r.note, baseUrl(req));
   }
-  // 불참 회신 → (자동 섭외·불참 시 즉시 안내 설정이면) 바로 다음 순서 위원에게 발송
+  // 불참 회신 → (순차 자동 초청·불참 시 즉시 안내 설정이면) 바로 다음 순서 위원에게 발송
   if (isDeclined(inv)) await afterDecline(inv.evaluationId, baseUrl(req));
   return json(await view(token));
 });

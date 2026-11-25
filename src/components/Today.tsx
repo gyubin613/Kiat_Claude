@@ -25,7 +25,7 @@ export default function Today({ evaluation: e }: { evaluation: EvalWithCounts })
     if (e.unread) todos.push({ tone: "bad", text: `새 위원 문의 ${e.unread}건에 답변이 필요합니다.`, href: `/admin/messages${q}`, go: "답변하기" });
     if (c.condPending) todos.push({ tone: "bad", text: `조건부 참석 문의 ${c.condPending}건에 답변하고 수락 여부를 정해 주세요.`, href: `/admin/responses${q}`, go: "답변하기" });
     if (e.recruitMode === "auto" && !e.autoRunning && e.rosterCount)
-      todos.push({ tone: "warn", text: "자동 섭외 순서를 확인하고 시작해 주세요. 시작하면 앞 순서부터 바로 메일이 나갑니다.", href: `/admin/priority${q}`, go: "순서 정하기" });
+      todos.push({ tone: "warn", text: "순차 자동 초청 순서를 확인하고 시작해 주세요. 시작하면 앞 순서부터 바로 메일이 나갑니다.", href: `/admin/priority${q}`, go: "순서 정하기" });
     if (c.notSent) todos.push({ tone: "warn", text: `초청 메일을 보내지 않은 위원이 ${c.notSent}명 있습니다.`, href: `/admin/invites${q}`, go: "메일 보내기" });
     if (active - c.no < e.seats && e.rosterCount)
       todos.push({ tone: "warn", text: `배석 ${e.seats}명 대비 초청 인원이 ${e.seats - (active - c.no)}명 부족합니다.`, href: `/admin/priority${q}`, go: "추가 섭외" });

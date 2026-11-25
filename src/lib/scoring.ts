@@ -4,7 +4,8 @@ import type { Evaluator, Weights } from "./types";
  * 섭외 우선순위 참고 점수
  *
  * - 과거 이력: (참여 + 1) / (초청 + 2)  ← 라플라스 보정. 이력이 없으면 0.5(중립)
- * - 관리자 선호도: (선호도 - 1) / 4, 미입력 시 3점(중립 = 0.5)
+ * - 관리자 선호도: (선호도 - 1) / 4, 미입력 시 3점(중립 = 0.5) — 주관적 항목이라 새 평가의 기본 가중치는 0%
+ * - 위원 순환(편중 방지): 1 / (1 + K-PASS 평가횟수 / 10). 0회 100점, 10회 50점, 30회 25점. 미입력 시 중립 0.5
  * - 해외경험: 해외 대학(학사 또는 최종학력) 50% + 해외 근무 경력 50% (3년 이상이면 만점)
  *   해외 관련 항목이 모두 미입력이면 중립 0.5, 일부만 입력되면 미입력 항목은 '없음'으로 계산
  * - 종합 점수 = 100 × Σ(가중치 × 점수) / Σ가중치
@@ -18,13 +19,17 @@ export type ScoreBreakdown = {
   preferenceIsNeutral: boolean;
   overseas: number;
   overseasIsNeutral: boolean;
+  rotation: number;
+  rotationIsNeutral: boolean;
   total: number; // 0~100 (소수점 1자리)
 };
 
 export const OVERSEAS_FULL_YEARS = 3;
+/** 위원 순환 점수가 절반이 되는 K-PASS 평가횟수 */
+export const ROTATION_HALF_COUNT = 10;
 
 type ScoreInput = Pick<Evaluator, "pastInvited" | "pastAttended" | "preference"> &
-  Partial<Pick<Evaluator, "bachelorAbroad" | "finalAbroad" | "overseasWorkYears">>;
+  Partial<Pick<Evaluator, "bachelorAbroad" | "finalAbroad" | "overseasWorkYears" | "kpassEvalCount">>;
 
 export function historyScore(ev: Pick<Evaluator, "pastInvited" | "pastAttended">) {
   const invited = ev.pastInvited ?? 0;
@@ -49,22 +54,34 @@ export function overseasScore(ev: Partial<Pick<Evaluator, "bachelorAbroad" | "fi
   return { value: 0.5 * univ + 0.5 * work, neutral: false };
 }
 
-export function normalizeWeights(w: Weights) {
-  const h = Math.max(0, w.history), p = Math.max(0, w.preference), o = Math.max(0, w.overseas);
-  const sum = h + p + o;
-  if (sum <= 0) return { history: 1 / 3, preference: 1 / 3, overseas: 1 / 3 };
-  return { history: h / sum, preference: p / sum, overseas: o / sum };
+/** 위원 순환(편중 방지): K-PASS 평가횟수가 적을수록 높다 */
+export function rotationScore(ev: Partial<Pick<Evaluator, "kpassEvalCount">>) {
+  const n = ev.kpassEvalCount ?? null;
+  if (n === null) return { value: 0.5, neutral: true };
+  return { value: 1 / (1 + Math.max(0, n) / ROTATION_HALF_COUNT), neutral: false };
+}
+
+type WeightsIn = Omit<Weights, "rotation"> & { rotation?: number };
+
+export function normalizeWeights(w: WeightsIn): Weights {
+  const h = Math.max(0, w.history), p = Math.max(0, w.preference), o = Math.max(0, w.overseas), r = Math.max(0, w.rotation ?? 0);
+  const sum = h + p + o + r;
+  // 모두 0이면 이전과 같이 세 항목을 똑같이 (기존 평가 점수 유지)
+  if (sum <= 0) return { history: 1 / 3, preference: 1 / 3, overseas: 1 / 3, rotation: 0 };
+  return { history: h / sum, preference: p / sum, overseas: o / sum, rotation: r / sum };
 }
 
 /** weights 에 숫자만 넘기면 (이전 방식) 과거 이력 가중치로 해석 */
-export function scoreEvaluator(ev: ScoreInput, weights: Weights | number): ScoreBreakdown {
+export function scoreEvaluator(ev: ScoreInput, weights: WeightsIn | number): ScoreBreakdown {
   const w = normalizeWeights(
     typeof weights === "number" ? { history: weights, preference: 100 - weights, overseas: 0 } : weights,
   );
   const h = historyScore(ev);
   const p = preferenceScore(ev);
   const o = overseasScore(ev);
-  const total = Math.round((w.history * h.value + w.preference * p.value + w.overseas * o.value) * 1000) / 10;
+  const r = rotationScore(ev);
+  const total =
+    Math.round((w.history * h.value + w.preference * p.value + w.overseas * o.value + w.rotation * r.value) * 1000) / 10;
   return {
     history: h.value,
     historyIsNeutral: h.neutral,
@@ -72,6 +89,8 @@ export function scoreEvaluator(ev: ScoreInput, weights: Weights | number): Score
     preferenceIsNeutral: p.neutral,
     overseas: o.value,
     overseasIsNeutral: o.neutral,
+    rotation: r.value,
+    rotationIsNeutral: r.neutral,
     total,
   };
 }
@@ -79,7 +98,7 @@ export function scoreEvaluator(ev: ScoreInput, weights: Weights | number): Score
 export type Ranked<T> = T & { score: ScoreBreakdown; rank: number };
 
 /** 점수 내림차순, 동점이면 참여 횟수 → 성명 순으로 안정 정렬 */
-export function rankEvaluators<T extends Evaluator>(list: T[], weights: Weights | number): Ranked<T>[] {
+export function rankEvaluators<T extends Evaluator>(list: T[], weights: WeightsIn | number): Ranked<T>[] {
   return list
     .map((ev) => ({ ...ev, score: scoreEvaluator(ev, weights) }))
     .sort(
@@ -92,13 +111,13 @@ export function rankEvaluators<T extends Evaluator>(list: T[], weights: Weights 
 }
 
 /**
- * 자동 섭외 순서: 담당자가 끌어서 정한 순서(autoQueue)를 먼저, 그 뒤에 아직 순서에 없는 위원을 점수순으로.
+ * 순차 자동 초청 순서: 담당자가 끌어서 정한 순서(autoQueue)를 먼저, 그 뒤에 아직 순서에 없는 위원을 점수순으로.
  * 제외(autoExcluded)한 위원은 빠진다. (서버·화면 공용)
  */
 export function autoOrder<T extends Evaluator>(
   roster: T[],
   e: { autoQueue?: string[]; autoExcluded?: string[] },
-  weights: Weights | number,
+  weights: WeightsIn | number,
 ): Ranked<T>[] {
   const ranked = rankEvaluators(roster, weights);
   const byId = new Map(ranked.map((v) => [v.id, v]));

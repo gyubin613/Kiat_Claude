@@ -296,7 +296,7 @@ table.table { width: 100%; border-collapse: collapse; }
 .seg button { border: 0; background: none; padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--muted); }
 .seg button.on { background: var(--primary); color: #fff; }
 .section-title { font-size: 13px; font-weight: 650; color: var(--muted); margin: 4px 0 8px; }
-.weights { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.weights { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
 .weights .w { display: grid; gap: 4px; }
 .weights .w .row { justify-content: space-between; }
 .conflict { color: var(--bad); font-weight: 650; }
@@ -312,7 +312,7 @@ table.table { width: 100%; border-collapse: collapse; }
 .decision-bar { display: grid; gap: 8px; padding: 12px; border: 1px solid #e8c98a; border-radius: 10px; background: #fffaf0; }
 @media (max-width: 960px) { .cond-item { grid-template-columns: 1fr; } }
 
-/* ---------- 자동 섭외 순서 ---------- */
+/* ---------- 순차 자동 초청 순서 ---------- */
 .queue { display: grid; }
 .q-row { display: grid; grid-template-columns: 34px 22px minmax(150px, 1.2fr) minmax(160px, 1.4fr) minmax(110px, 0.9fr) 56px 128px 120px; gap: 10px; align-items: center; padding: 10px 16px; border-top: 1px solid var(--line); background: #fff; }
 .q-row:first-child { border-top: 0; }
