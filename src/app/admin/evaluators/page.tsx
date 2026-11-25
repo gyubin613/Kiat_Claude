@@ -426,8 +426,8 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
           <div className="row">
             <button className="btn" onClick={() => download(`/api/admin/evaluations/${evaluation.id}/evaluators/export`)}>엑셀 다운로드</button>
             {!locked && <button className="btn" onClick={() => setCopying({ from: null, mode: "all" })}>이전 평가에서 불러오기</button>}
-            {!locked && <button className="btn" onClick={() => setImporting(true)}>엑셀로 추가·업데이트</button>}
-            {!locked && <button className="btn primary" onClick={() => setEditing("new")}>위원 추가</button>}
+            {!locked && <button className="btn" onClick={() => setEditing("new")}>위원 추가</button>}
+            {!locked && <button className="btn primary" onClick={() => setImporting(true)}>엑셀로 추가·업데이트</button>}
           </div>
         )}
       </div>
@@ -437,11 +437,11 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
           <div className="card-body stack" style={{ gap: 14 }}>
             <h2>이 평가의 위원 명단을 만들어 주세요</h2>
             <div className="grid-3">
+              <button className="choice" onClick={() => setImporting(true)} disabled={locked}>
+                <span><b>엑셀로 올리기 (K-PASS 파일 그대로)</b><br /><span className="small muted">K-PASS 위원 검색 양식·정보화실 목록이나 등록 양식 파일을 올립니다.</span></span>
+              </button>
               <button className="choice" onClick={() => setCopying({ from: null, mode: "all" })} disabled={locked}>
                 <span><b>이전 평가에서 불러오기</b><br /><span className="small muted">지난 평가 명단을 일괄로, 또는 원하는 위원만 골라 불러옵니다.</span></span>
-              </button>
-              <button className="choice" onClick={() => setImporting(true)} disabled={locked}>
-                <span><b>엑셀로 새로 올리기</b><br /><span className="small muted">등록 양식이나 다른 평가에서 내려받아 고친 파일을 올립니다.</span></span>
               </button>
               <button className="choice" onClick={() => setEditing("new")} disabled={locked}>
                 <span><b>직접 입력</b><br /><span className="small muted">위원을 한 명씩 추가합니다.</span></span>

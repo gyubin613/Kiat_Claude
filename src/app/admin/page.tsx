@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { STATUS_BADGE, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { RowMenu } from "@/components/ui";
 import Today from "@/components/Today";
+import StepGuide from "@/components/StepGuide";
 import { api, errMsg, Modal, useConfirm, useToast, ApiError } from "@/components/ui";
-import { formatDateKo } from "@/lib/util";
+import { daysUntil, formatDateKo, formatSlot } from "@/lib/util";
+import SlotPicker, { sortSlots, todayKst, type SlotDraft } from "@/components/SlotPicker";
 import { DEFAULT_FOLLOWUP, followupOf, type FollowupSettings, type Slot } from "@/lib/types";
 
-type SlotDraft = { id?: string; date: string; start: string; end: string; place: string };
 type Draft = {
   name: string;
   department: string;
@@ -30,10 +31,10 @@ const emptyDraft = (): Draft => ({
   deadline: "",
   seats: 5,
   requirements: "",
-  slots: [{ date: "", start: "10:00", end: "17:00", place: "" }],
+  slots: [],
   followup: { ...DEFAULT_FOLLOWUP },
   conflictKeywords: "",
-  recruitMode: "manual",
+  recruitMode: "auto",
 });
 
 function addDays(date: string, n: number) {
@@ -50,13 +51,13 @@ function RecruitModeOption({ value, running, onChange }: { value: "manual" | "au
       <div className="card-body stack" style={{ gap: 10 }}>
         <h3>섭외 방식</h3>
         <div className="seg" role="radiogroup" aria-label="섭외 방식">
+          <button type="button" className={value === "auto" ? "on" : ""} disabled={running} onClick={() => onChange("auto")} role="radio" aria-checked={value === "auto"}>순차 자동 초청 (권장)</button>
           <button type="button" className={value === "manual" ? "on" : ""} disabled={running} onClick={() => onChange("manual")} role="radio" aria-checked={value === "manual"}>직접 골라 초청</button>
-          <button type="button" className={value === "auto" ? "on" : ""} disabled={running} onClick={() => onChange("auto")} role="radio" aria-checked={value === "auto"}>순차 자동 초청 (순서대로 자동 발송)</button>
         </div>
         <p className="small muted">
           {value === "auto"
-            ? "우선순위 화면에서 위원 순서를 끌어서 정하고 [순차 자동 초청 시작]을 누르면, 배석 인원만큼 앞 순서부터 초청 메일이 바로 나갑니다. 불참 회신이 오면 즉시, 정한 시간 동안 회신이 없으면 다음 순서 위원에게 자동으로 보냅니다."
-            : "우선순위 화면에서 위원을 골라 초청 대상에 넣고, 초청 메일 화면에서 직접 보냅니다."}
+            ? "위원 순서만 정해 두면 필요한 인원만큼 앞 순서부터 초청 메일이 나갑니다. 불참 회신이 오면 즉시, 정한 시간 동안 회신이 없으면 다음 순서 위원에게 자동으로 보냅니다."
+            : "초청할 위원을 직접 골라 초청 메일 화면에서 보냅니다. 불참·무응답 시 다음 위원도 직접 고릅니다."}
         </p>
         {running && <span className="small" style={{ color: "var(--warn)" }}>순차 자동 초청 진행 중에는 방식을 바꿀 수 없습니다. 우선순위 화면에서 먼저 중지해 주세요.</span>}
         {value === "auto" && !meta?.email.configured && (
@@ -156,6 +157,35 @@ function RosterOption({ value: r, onChange }: { value: RosterChoice; onChange: (
   );
 }
 
+const WIZARD = ["평가 정보", "후보 일정", "회신 기한·섭외 방식", "확인"] as const;
+
+function DeadlinePicker({ value, firstSlot, onChange }: { value: string; firstSlot: string; onChange: (v: string) => void }) {
+  const today = todayKst();
+  const chips = firstSlot ? [7, 5, 3].map((n) => ({ n, date: addDays(firstSlot, -n) })).filter((c) => c.date > today) : [];
+  const dday = value ? daysUntil(value) : null;
+  return (
+    <div className="field">
+      <label htmlFor="deadline">회신 기한 *</label>
+      <div className="row">
+        <input id="deadline" className="input" style={{ width: 180 }} type="date" min={today} max={firstSlot || undefined} value={value} onChange={(e) => onChange(e.target.value)} aria-label="회신 기한" />
+        {chips.map((c) => (
+          <button type="button" key={c.n} className={`btn sm ${value === c.date ? "primary" : ""}`} onClick={() => onChange(c.date)}>
+            첫 후보일 {c.n}일 전 ({Number(c.date.slice(5, 7))}/{Number(c.date.slice(8))})
+          </button>
+        ))}
+      </div>
+      <span className="hint">
+        {value ? (
+          <>
+            <b>{formatDateKo(value)}</b>까지 회신을 받습니다{dday != null && dday >= 0 ? ` (오늘부터 ${dday}일)` : ""}.{" "}
+          </>
+        ) : null}
+        {firstSlot ? `첫 후보 일정은 ${formatDateKo(firstSlot)}입니다. 회신 기한은 그보다 앞서야 합니다.` : "후보 일정을 먼저 고르면 기한을 추천해 드립니다."}
+      </span>
+    </div>
+  );
+}
+
 function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; onClose: () => void }) {
   const { reload } = useAdmin();
   const router = useRouter();
@@ -179,17 +209,66 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
   );
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(0);
+  const [more, setMore] = useState(() => !!initial && !!(initial.requirements || initial.department || initial.conflictKeywords?.length));
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((s) => ({ ...s, [k]: v }));
-  const setSlot = (i: number, patch: Partial<SlotDraft>) => set("slots", d.slots.map((s, j) => (j === i ? { ...s, ...patch } : s)));
+  const firstSlot = sortSlots(d.slots.filter((s) => s.date))[0]?.date ?? "";
+
+  /** 단계별 확인 — 문제가 있으면 메시지 */
+  function check(i: number): string {
+    if (i === 0) {
+      if (!d.name.trim()) return "평가명을 입력해 주세요.";
+      if (!(Number(d.seats) >= 1)) return "필요한 위원 수를 1명 이상으로 입력해 주세요.";
+    }
+    if (i === 1) {
+      if (!d.slots.some((s) => s.date)) return "달력에서 후보 일정을 1개 이상 골라 주세요.";
+      const bad = d.slots.find((s) => s.date && (!s.start || (s.end && s.end <= s.start)));
+      if (bad) return `${formatDateKo(bad.date)} 일정의 시간을 확인해 주세요. (종료가 시작보다 늦어야 합니다)`;
+    }
+    if (i === 2) {
+      if (!d.deadline) return "회신 기한을 정해 주세요.";
+      if (firstSlot && d.deadline > firstSlot) return `회신 기한(${formatDateKo(d.deadline)})이 첫 후보 일정(${formatDateKo(firstSlot)})보다 늦습니다.`;
+    }
+    return "";
+  }
+  function go(to: number) {
+    setErr("");
+    if (to > step && !initial) {
+      for (let i = step; i < to; i++) {
+        const m = check(i);
+        if (m) {
+          setStep(i);
+          return setErr(m);
+        }
+      }
+    }
+    setStep(to);
+  }
+  // 회신 기한이 비어 있으면 후보 일정에 맞춰 추천값(7일 전, 오늘 이후)을 넣는다
+  function toDeadlineStep() {
+    if (!d.deadline && firstSlot) {
+      const s7 = addDays(firstSlot, -7);
+      const min = addDays(todayKst(), 1);
+      set("deadline", s7 > min ? s7 : min <= firstSlot ? min : firstSlot);
+    }
+    go(2);
+  }
 
   async function save() {
     setErr("");
-    const slots = d.slots.filter((s) => s.date);
-    if (!d.name.trim()) return setErr("평가명을 입력해 주세요.");
-    if (!d.deadline) return setErr("회신 기한을 입력해 주세요.");
-    if (!slots.length) return setErr("후보 일정을 1개 이상 입력해 주세요.");
+    const slots = sortSlots(d.slots.filter((s) => s.date));
+    for (let i = 0; i < 3; i++) {
+      const m = check(i);
+      if (m) {
+        setStep(i);
+        return setErr(m);
+      }
+    }
     const late = slots.find((s) => s.date < d.deadline);
-    if (late) return setErr(`회신 기한(${d.deadline}) 이전의 후보 일정이 있습니다: ${late.date}`);
+    if (late) {
+      setStep(2);
+      return setErr(`회신 기한(${formatDateKo(d.deadline)}) 이전의 후보 일정이 있습니다: ${formatDateKo(late.date)}`);
+    }
     setBusy(true);
     try {
       const payload = {
@@ -253,6 +332,9 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
     }
   }
 
+  const last = step === WIZARD.length - 1;
+  const f = followupOf({ followup: d.followup, recruitMode: d.recruitMode });
+
   return (
     <Modal
       size="lg"
@@ -261,91 +343,106 @@ function EvaluationForm({ initial, onClose }: { initial: EvalWithCounts | null; 
       footer={
         <>
           {err && <span className="err" style={{ marginRight: "auto", color: "var(--bad)" }}>{err}</span>}
-          <button className="btn" onClick={onClose}>
-            취소
-          </button>
-          <button className="btn primary" onClick={save} disabled={busy}>
-            {busy ? "저장 중…" : "저장"}
-          </button>
+          <button className="btn" onClick={onClose}>취소</button>
+          {step > 0 && <button className="btn" onClick={() => go(step - 1)}>이전</button>}
+          {!last && <button className={`btn ${initial ? "" : "primary"}`} onClick={() => (step === 1 ? toDeadlineStep() : go(step + 1))}>다음</button>}
+          {(initial || last) && (
+            <button className="btn primary" onClick={save} disabled={busy}>
+              {busy ? "저장 중…" : initial ? "저장" : "등록"}
+            </button>
+          )}
         </>
       }
     >
       <div className="stack">
-        <div className="form-grid">
-          <div className="field full">
-            <label>평가명 *</label>
-            <input className="input" value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="예) 2026년 ○○사업 신규과제 선정평가" />
+        <ol className="wizard" aria-label="등록 단계">
+          {WIZARD.map((w, i) => (
+            <li key={w} className={i === step ? "on" : i < step ? "done" : ""}>
+              <button type="button" onClick={() => (i === 2 && step < 2 ? (step === 1 ? toDeadlineStep() : go(2)) : go(i))} aria-current={i === step ? "step" : undefined}>
+                <span className="n">{i < step ? "✓" : i + 1}</span>
+                {w}
+              </button>
+            </li>
+          ))}
+        </ol>
+
+        {step === 0 && (
+          <div className="form-grid">
+            <div className="field full">
+              <label>평가명 *</label>
+              <input className="input" value={d.name} onChange={(e) => set("name", e.target.value)} placeholder="예) 2026년 ○○사업 신규과제 선정평가" autoFocus />
+            </div>
+            <div className="field">
+              <label htmlFor="seats">필요한 평가위원 수 (배석 인원) *</label>
+              <input id="seats" className="input" type="number" min={1} max={50} value={d.seats} onChange={(e) => set("seats", e.target.value)} />
+              <span className="hint">이 인원이 참석 가능 회신을 하면 섭외가 끝납니다.</span>
+            </div>
+            <div className="field">
+              <label>운영 담당자</label>
+              <input className="input" value={d.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="예) 홍길동 연구원" />
+              <span className="hint">초청 메일 서명에 들어갑니다.</span>
+            </div>
+            <div className="field full">
+              <button type="button" className="guide-toggle" onClick={() => setMore(!more)} aria-expanded={more}>
+                {more ? "▾" : "▸"} 추가 설정 (선택) — 담당부서, 참여 요청사항, 이해관계 확인 기관
+              </button>
+            </div>
+            {more && (
+              <>
+                <div className="field">
+                  <label>담당부서</label>
+                  <input className="input" value={d.department} onChange={(e) => set("department", e.target.value)} />
+                </div>
+                <div className="field full">
+                  <label>참여 요청사항</label>
+                  <textarea className="textarea" value={d.requirements} onChange={(e) => set("requirements", e.target.value)} placeholder="초청 메일과 회신 화면에 표시됩니다. 예) 평가 30분 전까지 도착, 신분증 지참" />
+                </div>
+                <div className="field full">
+                  <label>이해관계 확인 기관</label>
+                  <input className="input" value={d.conflictKeywords} onChange={(e) => set("conflictKeywords", e.target.value)} placeholder="피평가 기관명을 쉼표로 구분해 입력 (예: 다온테크, 가온대학교)" />
+                  <span className="hint">위원의 소속·학교에 포함되면 위원 목록에 &lsquo;이해관계 확인 필요&rsquo;로 표시합니다. 점수에는 반영하지 않습니다.</span>
+                </div>
+              </>
+            )}
           </div>
-          <div className="field">
-            <label>담당부서</label>
-            <input className="input" value={d.department} onChange={(e) => set("department", e.target.value)} />
+        )}
+
+        {step === 1 && <SlotPicker slots={d.slots} onChange={(v) => set("slots", v)} />}
+
+        {step === 2 && (
+          <div className="stack">
+            <DeadlinePicker value={d.deadline} firstSlot={firstSlot} onChange={(v) => set("deadline", v)} />
+            <RecruitModeOption value={d.recruitMode} running={!!initial?.autoRunning} onChange={(m) => set("recruitMode", m)} />
+            <FollowupEditor value={d.followup} auto={d.recruitMode === "auto"} onChange={(fu) => set("followup", fu)} />
           </div>
-          <div className="field">
-            <label>운영 담당자</label>
-            <input className="input" value={d.contactName} onChange={(e) => set("contactName", e.target.value)} placeholder="메일 서명에 사용됩니다" />
-          </div>
-          <div className="field">
-            <label>회신 기한 *</label>
-            <input className="input" type="date" value={d.deadline} onChange={(e) => set("deadline", e.target.value)} />
-          </div>
-          <div className="field">
-            <label>평가위원 배석 인원 *</label>
-            <input className="input" type="number" min={1} max={50} value={d.seats} onChange={(e) => set("seats", e.target.value)} />
-          </div>
-          <div className="field full">
-            <label>이해관계 확인 기관 (선택)</label>
-            <input className="input" value={d.conflictKeywords} onChange={(e) => set("conflictKeywords", e.target.value)} placeholder="피평가 기관명을 쉼표로 구분해 입력 (예: 다온테크, 가온대학교)" />
-            <span className="hint">위원의 소속·학사·최종학력 학교에 포함되면 위원 목록에 &lsquo;이해관계 확인&rsquo;으로 표시합니다. 우선순위 점수에는 반영하지 않습니다.</span>
-          </div>
-          <div className="field full">
-            <label>참여 요청사항</label>
-            <textarea className="textarea" value={d.requirements} onChange={(e) => set("requirements", e.target.value)} placeholder="초청 메일과 회신 화면에 표시됩니다." />
-          </div>
-        </div>
-        {!initial && <RosterOption value={roster} onChange={setRoster} />}
-        <RecruitModeOption value={d.recruitMode} running={!!initial?.autoRunning} onChange={(m) => set("recruitMode", m)} />
-        <FollowupEditor value={d.followup} auto={d.recruitMode === "auto"} onChange={(f) => set("followup", f)} />
-        <div>
-          <div className="row between" style={{ marginBottom: 8 }}>
-            <h3>후보 일정 및 장소</h3>
-            <button className="btn sm" onClick={() => set("slots", [...d.slots, { date: "", start: "10:00", end: "17:00", place: d.slots.at(-1)?.place ?? "" }])}>
-              + 일정 추가
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>날짜</th>
-                  <th>시작</th>
-                  <th>종료</th>
-                  <th>장소</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.slots.map((s, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}</td>
-                    <td><input className="input" type="date" value={s.date} onChange={(e) => setSlot(i, { date: e.target.value })} aria-label={`${i + 1}번 일정 날짜`} /></td>
-                    <td><input className="input" type="time" value={s.start} onChange={(e) => setSlot(i, { start: e.target.value })} aria-label="시작 시간" /></td>
-                    <td><input className="input" type="time" value={s.end} onChange={(e) => setSlot(i, { end: e.target.value })} aria-label="종료 시간" /></td>
-                    <td><input className="input" value={s.place} onChange={(e) => setSlot(i, { place: e.target.value })} placeholder="회의실 등" aria-label="장소" /></td>
-                    <td className="nowrap">
-                      <button className="btn ghost sm" title="다음 날로 복사" onClick={() => set("slots", [...d.slots.slice(0, i + 1), { ...s, id: undefined, date: addDays(s.date, 1) }, ...d.slots.slice(i + 1)])}>
-                        +1일
-                      </button>
-                      <button className="btn ghost sm" title="삭제" disabled={d.slots.length === 1} onClick={() => set("slots", d.slots.filter((_, j) => j !== i))}>
-                        ✕
-                      </button>
-                    </td>
-                  </tr>
+        )}
+
+        {step === 3 && (
+          <div className="stack">
+            <dl className="kv review">
+              <dt>평가명</dt><dd>{d.name || <span className="faint">미입력</span>}</dd>
+              <dt>필요한 위원 수</dt><dd>{d.seats}명</dd>
+              <dt>후보 일정</dt>
+              <dd>
+                {sortSlots(d.slots.filter((s) => s.date)).map((s, i) => (
+                  <div key={i}>{formatSlot(s)}</div>
                 ))}
-              </tbody>
-            </table>
+              </dd>
+              <dt>회신 기한</dt><dd>{d.deadline ? formatDateKo(d.deadline) : <span className="faint">미입력</span>}</dd>
+              <dt>섭외 방식</dt>
+              <dd>
+                {d.recruitMode === "auto"
+                  ? `순차 자동 초청 — 불참은 즉시, ${f.hours}시간 무응답이면 다음 순서로`
+                  : f.enabled
+                    ? `직접 골라 초청 — ${f.hours}시간 무응답이면 다음 순위 자동 안내`
+                    : "직접 골라 초청"}
+              </dd>
+              {d.contactName && (<><dt>운영 담당자</dt><dd>{d.contactName}</dd></>)}
+            </dl>
+            {!initial && <RosterOption value={roster} onChange={setRoster} />}
+            {!initial && <p className="small muted">[등록]을 누르면 다음 단계인 평가위원 명단 화면으로 이동합니다.</p>}
           </div>
-        </div>
+        )}
       </div>
     </Modal>
   );
@@ -395,18 +492,20 @@ export default function EvaluationsPage() {
 
   return (
     <div className="stack">
-      {current && <Today evaluation={current} />}
+      {current && <Today evaluation={current} onEdit={() => setEditing(current)} />}
 
       <div className="page-head" style={{ marginTop: current ? 8 : 0 }}>
         <div>
           <h1>평가 목록</h1>
-          <p>평가마다 후보 일정, 배석 인원, 자동 후속 안내를 따로 정합니다.</p>
+          <p>평가마다 후보 일정, 필요한 위원 수, 섭외 방식을 따로 정합니다.</p>
         </div>
         <div className="row">
           <button className="btn" onClick={seed} disabled={seeding}>{seeding ? "불러오는 중…" : "가상 데이터 불러오기"}</button>
           <button className="btn primary" onClick={() => setEditing("new")}>새 평가 등록</button>
         </div>
       </div>
+
+      <StepGuide evaluation={null} step={1} />
 
       {!loading && evaluations.length === 0 ? (
         <div className="card">

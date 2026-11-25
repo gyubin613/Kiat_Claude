@@ -34,6 +34,7 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
   const [filter, setFilter] = useState("");
   const [onlyFree, setOnlyFree] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showWeights, setShowWeights] = useState(false);
   const locked = evaluation.status === "finalized";
   const dirty = JSON.stringify(weights) !== JSON.stringify(saved);
 
@@ -107,7 +108,7 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>우선순위·섭외</h1>
+          <h1>초청 위원·순서</h1>
           <p>
             {evaluation.recruitMode === "auto"
               ? "순차 자동 초청: 순서를 정하고 시작하면 앞 순서부터 메일이 나갑니다. 점수는 참고자료이며 참석 가능성을 보장하지 않습니다."
@@ -137,9 +138,13 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
       <div className="card">
         <div className="card-body stack" style={{ gap: 12 }}>
           <div className="row between">
-            <h3>가중치</h3>
-            <button className="btn sm" onClick={saveWeights} disabled={locked || !dirty}>이 평가에 저장</button>
+            <button type="button" className="guide-toggle strong" onClick={() => setShowWeights(!showWeights)} aria-expanded={showWeights}>
+              {showWeights ? "▾" : "▸"} 참고 점수 기준 (선택) — 과거 이력 {Math.round(ratio.history * 100)}% · 위원 순환 {Math.round(ratio.rotation * 100)}% · 해외경험 {Math.round(ratio.overseas * 100)}%
+              {ratio.preference > 0 ? ` · 관리자 선호도 ${Math.round(ratio.preference * 100)}%` : ""}
+            </button>
+            {showWeights && <button className="btn sm" onClick={saveWeights} disabled={locked || !dirty}>이 평가에 저장</button>}
           </div>
+          {showWeights && (<>
           <div className="weights">
             {weightItems.map((w) => (
               <div key={w.key} className="w">
@@ -166,6 +171,7 @@ function Priority({ evaluation }: { evaluation: EvalWithCounts }) {
             입력하지 않은 항목은 중립(50점)으로 계산합니다. 학력은 이해관계 확인용이며, 해외 대학 여부만 해외경험 점수에 들어갑니다.
             명단 전체: 기존 위원 {rosterMix.returning}명 · 신규 위원 {rosterMix.fresh}명 (기존·신규 비율은 담당자가 순서·선택으로 조정)
           </p>
+          </>)}
         </div>
       </div>
 
