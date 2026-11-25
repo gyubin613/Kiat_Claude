@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { historyScore, rankEvaluators, scoreEvaluator } from "@/lib/scoring";
-import { EDUCATION_DEFAULTS, type Evaluator } from "@/lib/types";
-import { overseasScore } from "@/lib/scoring";
+import { DEFAULT_WEIGHTS, PROFILE_DEFAULTS, weightsOf, type Evaluator } from "@/lib/types";
+import { overseasScore, rotationScore } from "@/lib/scoring";
 import { conflictHits, finalText } from "@/lib/profile";
 
 const ev = (p: Partial<Evaluator>): Evaluator => ({
   id: p.id ?? "x", name: p.name ?? "가", org: "", email: "", phone: "", expertise: "", note: "",
-  ...EDUCATION_DEFAULTS, pastInvited: null, pastAttended: null, preference: null, createdAt: "", updatedAt: "", version: 1, ...p,
+  ...PROFILE_DEFAULTS, pastInvited: null, pastAttended: null, preference: null, createdAt: "", updatedAt: "", version: 1, ...p,
 });
 
 describe("우선순위 참고 점수", () => {
@@ -64,5 +64,35 @@ describe("학력 표시·이해관계 확인", () => {
     expect(conflictHits(v, ["한결대학교 산학협력단"]).map((h) => h.field)).toEqual(["학사"]);
     expect(conflictHits(v, ["누리"])).toEqual([]);
     expect(conflictHits(v, [])).toEqual([]);
+  });
+});
+
+describe("위원 순환(편중 방지)과 가중치 개편", () => {
+  const base = { pastInvited: 4, pastAttended: 2, preference: 5, finalAbroad: true, overseasWorkYears: 1 };
+  it("K-PASS 평가횟수가 적을수록 순환 점수가 높고, 미입력은 중립", () => {
+    expect(rotationScore({ kpassEvalCount: 0 }).value).toBe(1);
+    expect(rotationScore({ kpassEvalCount: 10 }).value).toBe(0.5);
+    expect(rotationScore({ kpassEvalCount: 30 }).value).toBe(0.25);
+    expect(rotationScore({})).toEqual({ value: 0.5, neutral: true });
+  });
+  it("순환 항목이 없던 기존 평가의 가중치는 점수가 그대로다 (진행 중인 평가 영향 없음)", () => {
+    const legacy = { history: 50, preference: 30, overseas: 20 };
+    const before = 100 * (0.5 * (3 / 6) + 0.3 * 1 + 0.2 * (0.5 + 0.5 * (1 / 3)));
+    for (const n of [null, 0, 40]) {
+      expect(scoreEvaluator({ ...base, kpassEvalCount: n }, legacy).total).toBeCloseTo(before, 1);
+      expect(scoreEvaluator({ ...base, kpassEvalCount: n }, weightsOf({ weights: legacy, historyWeight: 50 })).total).toBeCloseTo(before, 1);
+    }
+    expect(weightsOf({ weights: legacy, historyWeight: 50 }).rotation).toBe(0);
+    expect(weightsOf({ historyWeight: 40 } as never)).toEqual({ history: 40, preference: 60, overseas: 0, rotation: 0 });
+  });
+  it("새 평가 기본 가중치는 관리자 선호도를 쓰지 않는다", () => {
+    expect(DEFAULT_WEIGHTS.preference).toBe(0);
+    const a = scoreEvaluator({ ...base, preference: 1, kpassEvalCount: 5 }, DEFAULT_WEIGHTS).total;
+    const b = scoreEvaluator({ ...base, preference: 5, kpassEvalCount: 5 }, DEFAULT_WEIGHTS).total;
+    expect(a).toBe(b);
+    // 평가가 많은 위원은 순환 점수만큼 뒤로
+    const many = scoreEvaluator({ ...base, kpassEvalCount: 40 }, DEFAULT_WEIGHTS).total;
+    const few = scoreEvaluator({ ...base, kpassEvalCount: 2 }, DEFAULT_WEIGHTS).total;
+    expect(few).toBeGreaterThan(many);
   });
 });

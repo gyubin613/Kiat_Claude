@@ -1,5 +1,5 @@
 import { kv } from "./store";
-import { DEFAULT_FOLLOWUP, EDUCATION_DEFAULTS, type Attendance, type ConditionReview, type Evaluation, type Evaluator, type Invite, type Slot } from "./types";
+import { DEFAULT_FOLLOWUP, DEFAULT_WEIGHTS, PROFILE_DEFAULTS, type Attendance, type ConditionReview, type Evaluation, type Evaluator, type Invite, type Slot } from "./types";
 import { DEFAULT_TEMPLATE } from "./email";
 import { newId, newToken, normalizeEmail, normalizeKey, nowIso } from "./util";
 import type { z } from "zod";
@@ -110,8 +110,8 @@ export async function createEvaluation(input: EvaluationCreate): Promise<Evaluat
     seats: input.seats,
     requirements: input.requirements,
     slots: normalizeSlots(input.slots),
-    historyWeight: input.weights?.history ?? input.historyWeight,
-    weights: input.weights ?? { history: input.historyWeight, preference: 100 - input.historyWeight, overseas: 0 },
+    historyWeight: input.weights?.history ?? DEFAULT_WEIGHTS.history,
+    weights: input.weights ? { ...input.weights, rotation: input.weights.rotation ?? 0 } : { ...DEFAULT_WEIGHTS },
     conflictKeywords: input.conflictKeywords ?? [],
     recruitMode: input.recruitMode ?? "manual",
     autoQueue: input.autoQueue ?? [],
@@ -157,7 +157,7 @@ export async function updateEvaluation(id: string, patch: Partial<EvaluationInpu
         throw new AppError(423, "최종 확정된 평가는 수정할 수 없습니다.");
       }
       if (patch.recruitMode && patch.recruitMode !== (cur.recruitMode ?? "manual") && cur.autoRunning)
-        throw new AppError(400, "자동 섭외 진행 중에는 섭외 방식을 바꿀 수 없습니다. 먼저 자동 섭외를 중지해 주세요.");
+        throw new AppError(400, "순차 자동 초청 진행 중에는 섭외 방식을 바꿀 수 없습니다. 먼저 순차 자동 초청을 중지해 주세요.");
       return {
         ...cur,
         ...Object.fromEntries(Object.entries(patch).filter(([key]) => key !== "slots")),
@@ -193,12 +193,12 @@ export async function deleteEvaluation(id: string) {
 // ======================= 평가위원 =======================
 
 type EvaluatorInput = z.output<typeof evaluatorInput>;
-type EduKey = keyof typeof EDUCATION_DEFAULTS;
+type EduKey = keyof typeof PROFILE_DEFAULTS;
 type EvaluatorCreate = Omit<EvaluatorInput, EduKey> & Partial<Pick<EvaluatorInput, EduKey>>;
 
-/** 학력 항목이 없던 이전 데이터를 기본값으로 보완 */
+/** 학력·K-PASS 항목이 없던 이전 데이터를 기본값으로 보완 */
 export function normalizeEvaluator(v: Evaluator): Evaluator {
-  return { ...EDUCATION_DEFAULTS, ...v };
+  return { ...PROFILE_DEFAULTS, ...v };
 }
 
 /**
@@ -282,7 +282,7 @@ export async function createEvaluator(evalId: string, input: EvaluatorCreate, op
     );
   }
   const now = nowIso();
-  const v: Evaluator = { id: newId("v_"), ...EDUCATION_DEFAULTS, ...input, evaluationId: evalId, createdAt: now, updatedAt: now, version: 1 };
+  const v: Evaluator = { id: newId("v_"), ...PROFILE_DEFAULTS, ...input, evaluationId: evalId, createdAt: now, updatedAt: now, version: 1 };
   await kv().set(K.evaluator(v.id), v);
   await kv().sadd(K.roster(evalId), v.id);
   return v;
@@ -376,7 +376,7 @@ export async function importEvaluators(
 const COPY_FIELDS = [
   "name", "org", "email", "phone", "expertise", "pastInvited", "pastAttended", "preference", "note",
   "bachelorSchool", "bachelorMajor", "bachelorAbroad", "finalDegree", "finalSchool", "finalMajor", "finalAbroad",
-  "overseasWorkYears", "overseasWorkDetail",
+  "overseasWorkYears", "overseasWorkDetail", "techFields", "kpassEvalCount", "intlPool", "sanction",
 ] as const;
 
 export type CopyResult = { name: string; result: "created" | "skipped"; message?: string };
@@ -597,14 +597,14 @@ export async function submitResponse(token: string, input: z.output<typeof respo
   );
 }
 
-// ======================= 자동 섭외 =======================
+// ======================= 순차 자동 초청 =======================
 
 export async function setAutoRunning(evalId: string, running: boolean, order?: { queue?: string[]; excluded?: string[] }) {
   return updateWithRetry<Evaluation>(
     K.eval(evalId),
     (cur) => {
       if (cur.status === "finalized") throw new AppError(423, "최종 확정된 평가입니다.");
-      if (cur.recruitMode !== "auto") throw new AppError(400, "자동 섭외로 설정된 평가가 아닙니다.");
+      if (cur.recruitMode !== "auto") throw new AppError(400, "순차 자동 초청으로 설정된 평가가 아닙니다.");
       return {
         ...cur,
         autoRunning: running,

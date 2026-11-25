@@ -238,10 +238,10 @@ function FollowupBanner({ evaluation, onRan }: { evaluation: EvalWithCounts; onR
         <span>
           {evaluation.autoRunning ? (
             <>
-              <b>자동 섭외 진행 중</b> — 불참 회신이 오면 즉시, {f.hours}시간 무응답이면 다음 순서 위원에게 메일을 보냅니다.
+              <b>순차 자동 초청 진행 중</b> — 불참 회신이 오면 즉시, {f.hours}시간 무응답이면 다음 순서 위원에게 메일을 보냅니다.
             </>
           ) : (
-            <>자동 섭외로 설정된 평가입니다. 우선순위·섭외 화면에서 순서를 정하고 시작해 주세요.</>
+            <>순차 자동 초청으로 설정된 평가입니다. 우선순위·섭외 화면에서 순서를 정하고 시작해 주세요.</>
           )}
         </span>
         <a className="btn sm" href={`/admin/priority?e=${evaluation.id}`}>{evaluation.autoRunning ? "순서 보기" : "순서 정하기"}</a>

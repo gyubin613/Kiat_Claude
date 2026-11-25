@@ -75,7 +75,7 @@ async function runFollowupInner(evalId: string, baseUrl: string, now: Date): Pro
   if (auto && !e.autoRunning) return null;
   const invites = await listInvites(evalId);
   const plan = planFollowup(e, invites, now);
-  // 수동 모드: 무응답·불참이 생겼을 때만. 자동 섭외: 배석 인원이 부족하면 언제든 다음 순서로 채운다
+  // 수동 모드: 무응답·불참이 생겼을 때만. 순차 자동 초청: 배석 인원이 부족하면 언제든 다음 순서로 채운다
   if (!plan.triggers.length && !(auto && plan.needed > 0)) return null;
 
   const k = auto ? plan.needed : Math.min(plan.needed, plan.triggers.length);
@@ -112,11 +112,11 @@ async function runFollowupInner(evalId: string, baseUrl: string, now: Date): Pro
   const invited: FollowupResult["invited"] = [];
   if (picks.length) {
     // createInvites 는 이미 있는 위원을 건너뛰므로, 실제로 새로 만든 초청에만 발송 (동시 실행 시 중복 발송 방지)
-    const why = plan.triggers.length ? plan.triggers.map(reason).join(", ") : "자동 섭외 순서";
+    const why = plan.triggers.length ? plan.triggers.map(reason).join(", ") : "순차 자동 초청 순서";
     const created = await createInvites(
       evalId,
       picks.map((p) => p.id),
-      { auto: true, logNote: `${auto ? "자동 섭외" : "자동 후속 안내"}: ${why}` },
+      { auto: true, logNote: `${auto ? "순차 자동 초청" : "자동 후속 안내"}: ${why}` },
     );
     const latest = await getEvaluation(evalId);
     for (const p of picks) {

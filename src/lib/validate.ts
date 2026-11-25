@@ -18,6 +18,7 @@ const weightsSchema = z.object({
   history: z.coerce.number().min(0).max(100),
   preference: z.coerce.number().min(0).max(100),
   overseas: z.coerce.number().min(0).max(100),
+  rotation: z.coerce.number().min(0).max(100).optional(),
 });
 
 const evaluationBase = {
@@ -66,7 +67,7 @@ const optionalCount = z
   .union([z.number(), z.string(), z.null()])
   .transform((v, ctx) => {
     if (v === null || v === "") return null;
-    const n = Number(v);
+    const n = Number(typeof v === "string" ? v.replace(/[회건]/g, "").trim() : v);
     if (!Number.isInteger(n) || n < 0) {
       ctx.addIssue({ code: "custom", message: "0 이상의 정수를 입력해 주세요." });
       return z.NEVER;
@@ -87,7 +88,7 @@ const optionalPreference = z
   });
 
 /** Y/N, 예/아니오, 해외/국내, true/false → boolean, 빈칸 → null */
-const optionalBool = z
+const ynBool = (msg: string) => z
   .union([z.boolean(), z.string(), z.null()])
   .transform((v, ctx) => {
     if (v === null || typeof v === "boolean") return v;
@@ -95,9 +96,10 @@ const optionalBool = z
     if (t === "") return null;
     if (["y", "yes", "예", "o", "해외", "true", "1"].includes(t)) return true;
     if (["n", "no", "아니오", "아니요", "x", "국내", "false", "0"].includes(t)) return false;
-    ctx.addIssue({ code: "custom", message: "해외 여부는 Y 또는 N으로 입력해 주세요." });
+    ctx.addIssue({ code: "custom", message: msg });
     return z.NEVER;
   });
+const optionalBool = ynBool("해외 여부는 Y 또는 N으로 입력해 주세요.");
 
 const optionalYears = z
   .union([z.number(), z.string(), z.null()])
@@ -146,6 +148,10 @@ const evaluatorBase = {
   finalAbroad: optionalBool,
   overseasWorkYears: optionalYears,
   overseasWorkDetail: text(200),
+  techFields: text(200),
+  kpassEvalCount: optionalCount,
+  intlPool: ynBool("국제기술협력단 평가위원 여부는 Y 또는 N으로 입력해 주세요."),
+  sanction: text(300),
 };
 
 export const evaluatorInput = z
@@ -168,6 +174,10 @@ export const evaluatorInput = z
     finalAbroad: evaluatorBase.finalAbroad.default(null),
     overseasWorkYears: evaluatorBase.overseasWorkYears.default(null),
     overseasWorkDetail: evaluatorBase.overseasWorkDetail.default(""),
+    techFields: evaluatorBase.techFields.default(""),
+    kpassEvalCount: evaluatorBase.kpassEvalCount.default(null),
+    intlPool: evaluatorBase.intlPool.default(null),
+    sanction: evaluatorBase.sanction.default(""),
   })
   .refine((v) => v.pastInvited == null || v.pastAttended == null || v.pastAttended <= v.pastInvited, {
     message: "참여 횟수는 초청 횟수보다 클 수 없습니다.",

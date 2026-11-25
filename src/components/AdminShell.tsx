@@ -6,6 +6,8 @@ import { createContext, Suspense, useCallback, useContext, useEffect, useMemo, u
 import type { Evaluation } from "@/lib/types";
 import { api, ConfirmProvider, ToastProvider } from "./ui";
 import { daysUntil, formatDateKo } from "@/lib/util";
+import { nextStep, stepDone, STEPS, type StepNo } from "@/lib/guide";
+import StepGuide from "./StepGuide";
 
 export type Counts = { total: number; notSent: number; waiting: number; yes: number; conditional: number; condPending: number; no: number; withdrawn: number; responded: number };
 export type EvalWithCounts = Evaluation & { counts: Counts; unread: number; questionsWaiting: number; overdue: number; rosterCount: number };
@@ -43,15 +45,6 @@ export function useAdmin() {
 }
 
 const LS_KEY = "kiat.currentEvaluation";
-
-const STEPS = [
-  { href: "/admin", label: "평가 등록", step: 1 },
-  { href: "/admin/evaluators", label: "평가위원 명단", step: 2 },
-  { href: "/admin/priority", label: "우선순위·섭외", step: 3 },
-  { href: "/admin/invites", label: "초청 메일", step: 4 },
-  { href: "/admin/responses", label: "회신 현황", step: 5 },
-  { href: "/admin/finalize", label: "최종 확정", step: 6 },
-];
 
 export const STATUS_BADGE: Record<Evaluation["status"], { label: string; cls: string }> = {
   draft: { label: "준비 중", cls: "" },
@@ -150,21 +143,11 @@ function Shell({ children }: { children: ReactNode }) {
   const current = useMemo(() => evaluations.find((e) => e.id === currentId) ?? null, [evaluations, currentId]);
   const q = current ? `?e=${current.id}` : "";
 
-  const done = (step: number) => {
-    if (!current) return false;
-    const c = current.counts;
-    switch (step) {
-      case 1: return current.slots.length > 0;
-      case 2: return current.rosterCount > 0;
-      case 3: return c.total - c.withdrawn >= current.seats;
-      case 4: return c.total > 0 && c.notSent === 0;
-      case 5: return c.total > 0 && c.waiting === 0 && c.notSent === 0;
-      case 6: return current.status === "finalized";
-    }
-    return false;
-  };
+  const done = (step: StepNo) => (current ? stepDone(current, step) : false);
+  const now = current && current.status !== "finalized" ? nextStep(current) : null;
+  const pageStep = STEPS.find((s) => (s.href === "/admin" ? pathname === "/admin" : pathname.startsWith(s.href)))?.step ?? null;
   // 사이드바에는 '처리할 일'이 있을 때만 숫자를 표시
-  const badge = (step: number): { n: number; cls: string } | null => {
+  const badge = (step: StepNo): { n: number; cls: string } | null => {
     if (!current || current.status === "finalized") return null;
     const c = current.counts;
     if (step === 4 && c.notSent) return { n: c.notSent, cls: "warn" };
@@ -189,19 +172,23 @@ function Shell({ children }: { children: ReactNode }) {
             <span>통합관리 시스템 (시제품)</span>
           </div>
           <nav className="rail" aria-label="업무 순서">
-            {STEPS.map((s) => {
-              const active = s.href === "/admin" ? pathname === "/admin" : pathname.startsWith(s.href);
+            {STEPS.map((s, i) => {
+              const active = s.step === pageStep;
               const b = badge(s.step);
+              const isNow = now?.step === s.step && !now.waiting;
               return (
-                <Link key={s.href} href={s.href + q} className={`nav-item ${active ? "active" : ""} ${done(s.step) ? "done" : ""}`}>
-                  <span className="nav-step">{done(s.step) && !active ? "✓" : s.step}</span>
-                  {s.label}
-                  {b && <span className={`nav-count ${b.cls}`}>{b.n}</span>}
-                </Link>
+                <div key={s.href} className="rail-item">
+                  {(i === 0 || STEPS[i - 1].phase !== s.phase) && <div className="nav-phase">{s.phase}</div>}
+                  <Link href={s.href + q} className={`nav-item ${active ? "active" : ""} ${done(s.step) ? "done" : ""}`}>
+                    <span className="nav-step">{done(s.step) && !active ? "✓" : s.step}</span>
+                    {s.label}
+                    {b ? <span className={`nav-count ${b.cls}`}>{b.n}</span> : isNow ? <span className="nav-now">지금</span> : null}
+                  </Link>
+                </div>
               );
             })}
           </nav>
-          <div className="nav-label">소통·조회</div>
+          <div className="nav-label">그 밖의 메뉴</div>
           <Link href={"/admin/messages" + q} className={`nav-item ${pathname.startsWith("/admin/messages") ? "active" : ""}`}>
             위원 문의·안내
             {current?.unread ? <span className="nav-count">{current.unread}</span> : null}
@@ -294,7 +281,10 @@ function Shell({ children }: { children: ReactNode }) {
               </div>
             ) : null;
           })()}
-          <main className="content">{children}</main>
+          <main className="content">
+            {pageStep && pageStep > 1 && <StepGuide evaluation={current} step={pageStep} />}
+            {children}
+          </main>
         </div>
       </div>
     </AdminCtx.Provider>

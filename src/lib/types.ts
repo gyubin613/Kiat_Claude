@@ -47,18 +47,25 @@ export type RecruitMode = "manual" | "auto";
 
 export function followupOf(e: Pick<Evaluation, "followup" | "recruitMode">): FollowupSettings {
   const f = { ...DEFAULT_FOLLOWUP, ...(e.followup ?? {}) };
-  // 자동 섭외: 무응답·불참 모두 다음 순서로 넘기고 메일까지 자동 발송
+  // 순차 자동 초청: 무응답·불참 모두 다음 순서로 넘기고 메일까지 자동 발송
   if (e.recruitMode === "auto") return { ...f, enabled: true, onDecline: true, autoSend: true };
   return f;
 }
 
-/** 섭외 우선순위 가중치 (각 0~100, 합으로 나누어 비율 적용) */
-export type Weights = { history: number; preference: number; overseas: number };
+/**
+ * 섭외 우선순위 가중치 (각 0~100, 합으로 나누어 비율 적용)
+ * - rotation(위원 순환): K-PASS 평가횟수가 적을수록 높음. 이 항목이 생기기 전에 만든 평가는 0으로 읽어 점수가 그대로 유지된다.
+ * - preference(관리자 선호도): 주관적 항목이라 새 평가에서는 0%. 이전에 만든 평가에만 남아 있다.
+ */
+export type Weights = { history: number; preference: number; overseas: number; rotation: number };
+
+/** 새 평가의 기본 가중치 — 객관 지표만 사용 */
+export const DEFAULT_WEIGHTS: Weights = { history: 40, preference: 0, overseas: 30, rotation: 30 };
 
 export function weightsOf(e: Pick<Evaluation, "weights" | "historyWeight">): Weights {
-  if (e.weights) return e.weights;
+  if (e.weights) return { ...e.weights, rotation: e.weights.rotation ?? 0 };
   const h = e.historyWeight ?? 50;
-  return { history: h, preference: 100 - h, overseas: 0 };
+  return { history: h, preference: 100 - h, overseas: 0, rotation: 0 };
 }
 
 export type Evaluation = {
@@ -71,14 +78,14 @@ export type Evaluation = {
   requirements: string; // 참여 요청사항
   slots: Slot[];
   historyWeight: number; // (이전 버전 호환) 과거 이력 가중치 — weightsOf()로 읽기
-  weights?: Weights;
+  weights?: Omit<Weights, "rotation"> & { rotation?: number }; // weightsOf()로 읽기
   conflictKeywords?: string[]; // 이해관계 확인용 피평가 기관명 등 (가중치 미반영)
   emailTemplate: EmailTemplate;
   followup?: FollowupSettings; // 이전 데이터 호환을 위해 선택 항목 (followupOf()로 읽기)
   recruitMode?: RecruitMode; // 없으면 manual
-  autoQueue?: string[]; // 자동 섭외 순서 (위원 id, 앞쪽부터 발송)
-  autoExcluded?: string[]; // 자동 섭외에서 제외한 위원
-  autoRunning?: boolean; // 자동 섭외 진행 중
+  autoQueue?: string[]; // 순차 자동 초청 순서 (위원 id, 앞쪽부터 발송)
+  autoExcluded?: string[]; // 순차 자동 초청에서 제외한 위원
+  autoRunning?: boolean; // 순차 자동 초청 진행 중
   autoStartedAt?: string | null;
   status: EvaluationStatus;
   finalization: Finalization | null;
@@ -109,6 +116,11 @@ export type Evaluator = {
   // 해외 근무 경력
   overseasWorkYears: number | null; // null = 미입력, 0 = 없음
   overseasWorkDetail: string;
+  // K-PASS에서 받은 정보 (객관 지표)
+  techFields: string; // 기술분야 (1·2순위 등, " / "로 연결)
+  kpassEvalCount: number | null; // K-PASS 평가횟수 — 위원 순환(편중 방지) 지표
+  intlPool: boolean | null; // 국제기술협력단 평가위원 여부
+  sanction: string; // 제재 기간·사유 (제재 기간 중인 경우만, 빈칸 = 없음)
   evaluationId?: string; // 소속 평가 (이전 버전 공통 명단은 없음)
   createdAt: string;
   updatedAt: string;
@@ -129,6 +141,20 @@ export const EDUCATION_DEFAULTS = {
   overseasWorkYears: null,
   overseasWorkDetail: "",
 } satisfies Partial<Evaluator>;
+
+/** 이전 데이터에 없던 항목의 기본값 (학력 + K-PASS 정보) */
+export const PROFILE_DEFAULTS = {
+  ...EDUCATION_DEFAULTS,
+  techFields: "",
+  kpassEvalCount: null,
+  intlPool: null,
+  sanction: "",
+} satisfies Partial<Evaluator>;
+
+/** 우리 사업 평가에 참여한 적이 있는 위원(기존) / 없는 위원(신규) */
+export function isReturning(v: Pick<Evaluator, "pastAttended">) {
+  return (v.pastAttended ?? 0) > 0;
+}
 
 export type Attendance = "yes" | "conditional" | "no";
 

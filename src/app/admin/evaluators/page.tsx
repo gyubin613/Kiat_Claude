@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import EvaluatorEditor from "@/components/EvaluatorEditor";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { api, download, errMsg, Modal, RowMenu, useConfirm, useToast } from "@/components/ui";
-import { bachelorText, educationMissing, finalText, overseasTags } from "@/lib/profile";
+import { bachelorText, educationMissing, finalText, overseasTags, poolTags } from "@/lib/profile";
 import type { Evaluator } from "@/lib/types";
 
 type PreviewRow = {
@@ -26,6 +26,7 @@ function ImportDialog({ evaluationId, hasRoster, onClose, onDone }: { evaluation
   const [mode, setMode] = useState<"skip" | "fill" | "overwrite">("fill");
   const [preview, setPreview] = useState<PreviewRow[] | null>(null);
   const [unmatched, setUnmatched] = useState<string[]>([]);
+  const [notices, setNotices] = useState<string[]>([]);
   const [results, setResults] = useState<ResultRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -39,13 +40,14 @@ function ImportDialog({ evaluationId, hasRoster, onClose, onDone }: { evaluation
     fd.append("mode", mode);
     if (dryRun) fd.append("dryRun", "1");
     try {
-      const res = await api<{ preview?: PreviewRow[]; unmatchedHeaders?: string[]; results?: ResultRow[] }>(`/api/admin/evaluations/${evaluationId}/evaluators/import`, {
+      const res = await api<{ preview?: PreviewRow[]; unmatchedHeaders?: string[]; notices?: string[]; results?: ResultRow[] }>(`/api/admin/evaluations/${evaluationId}/evaluators/import`, {
         method: "POST",
         body: fd,
       });
       if (dryRun) {
         setPreview(res.preview ?? []);
         setUnmatched(res.unmatchedHeaders ?? []);
+        setNotices(res.notices ?? []);
       } else {
         setResults(res.results ?? []);
         const n = (res.results ?? []).filter((r) => r.result === "created").length;
@@ -94,7 +96,10 @@ function ImportDialog({ evaluationId, hasRoster, onClose, onDone }: { evaluation
           <>
             <div className="notice">
               1행에 머리글이 있는 .xlsx 파일을 올려 주세요. 기본정보 외에 학사·최종학력, 해외 여부(Y/N), 해외 근무 경력(년)도 읽습니다.
-              <b> 성명</b>만 필수이며, 비어 있는 항목은 등록 후 보완할 수 있습니다.{" "}
+              <b> 성명</b>만 필수이며, 비어 있는 항목은 등록 후 보완할 수 있습니다.
+              <br />
+              <b>K-PASS에서 내려받은 파일</b>(위원 검색 양식, 정보화실 목록)도 그대로 올릴 수 있습니다. 두 파일이 모두 있으면
+              위원 검색 양식(이메일 포함)을 먼저 올리고, 정보화실 목록은 &lsquo;빈 항목만 보완&rsquo;으로 올려 주세요.{" "}
               <button className="btn sm" onClick={() => download("/api/admin/evaluators/template")}>등록 양식 내려받기</button>
             </div>
             <div className="row">
@@ -118,6 +123,11 @@ function ImportDialog({ evaluationId, hasRoster, onClose, onDone }: { evaluation
           </>
         )}
         {err && <div className="notice bad">{err}</div>}
+        {notices.length > 0 && !results && (
+          <div className="notice">
+            {notices.map((n) => <div key={n}>{n}</div>)}
+          </div>
+        )}
         {unmatched.length > 0 && !results && <div className="notice warn">인식하지 못한 열은 제외됩니다: {unmatched.join(", ")}</div>}
         {stats && !results && (
           <div className="stats">
@@ -322,7 +332,7 @@ function CopyDialog({
             ) : (
               <table className="table">
                 <thead>
-                  <tr>{mode === "pick" && <th></th>}<th>위원</th><th>학력</th><th className="num">초청/참여</th><th className="num">선호</th></tr>
+                  <tr>{mode === "pick" && <th></th>}<th>위원</th><th>학력</th><th className="num">초청/참여</th><th className="num">K-PASS 평가</th></tr>
                 </thead>
                 <tbody>
                   {(mode === "pick" ? visible : list).map((v) => {
@@ -336,7 +346,7 @@ function CopyDialog({
                         <td><div className="who"><b>{v.name}</b><span>{v.org}{v.expertise ? ` · ${v.expertise}` : ""}</span></div></td>
                         <td className="small">{finalText(v) || bachelorText(v) || <span className="faint">미입력</span>}</td>
                         <td className="num">{v.pastInvited == null ? "-" : `${v.pastInvited}/${v.pastAttended ?? 0}`}</td>
-                        <td className="num">{v.preference ?? "-"}</td>
+                        <td className="num">{v.kpassEvalCount ?? "-"}</td>
                       </tr>
                     );
                   })}
@@ -388,7 +398,7 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
     return (list ?? []).filter(
       (v) =>
         (!onlyIncomplete || incomplete(v)) &&
-        (!k || [v.name, v.org, v.email, v.expertise, v.note, v.bachelorSchool, v.finalSchool].some((s) => s.toLowerCase().includes(k))),
+        (!k || [v.name, v.org, v.email, v.expertise, v.techFields, v.note, v.bachelorSchool, v.finalSchool].some((s) => s.toLowerCase().includes(k))),
     );
   }, [list, q, onlyIncomplete]);
 
@@ -416,8 +426,8 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
           <div className="row">
             <button className="btn" onClick={() => download(`/api/admin/evaluations/${evaluation.id}/evaluators/export`)}>엑셀 다운로드</button>
             {!locked && <button className="btn" onClick={() => setCopying({ from: null, mode: "all" })}>이전 평가에서 불러오기</button>}
-            {!locked && <button className="btn" onClick={() => setImporting(true)}>엑셀로 추가·업데이트</button>}
-            {!locked && <button className="btn primary" onClick={() => setEditing("new")}>위원 추가</button>}
+            {!locked && <button className="btn" onClick={() => setEditing("new")}>위원 추가</button>}
+            {!locked && <button className="btn primary" onClick={() => setImporting(true)}>엑셀로 추가·업데이트</button>}
           </div>
         )}
       </div>
@@ -427,11 +437,11 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
           <div className="card-body stack" style={{ gap: 14 }}>
             <h2>이 평가의 위원 명단을 만들어 주세요</h2>
             <div className="grid-3">
+              <button className="choice" onClick={() => setImporting(true)} disabled={locked}>
+                <span><b>엑셀로 올리기 (K-PASS 파일 그대로)</b><br /><span className="small muted">K-PASS 위원 검색 양식·정보화실 목록이나 등록 양식 파일을 올립니다.</span></span>
+              </button>
               <button className="choice" onClick={() => setCopying({ from: null, mode: "all" })} disabled={locked}>
                 <span><b>이전 평가에서 불러오기</b><br /><span className="small muted">지난 평가 명단을 일괄로, 또는 원하는 위원만 골라 불러옵니다.</span></span>
-              </button>
-              <button className="choice" onClick={() => setImporting(true)} disabled={locked}>
-                <span><b>엑셀로 새로 올리기</b><br /><span className="small muted">등록 양식이나 다른 평가에서 내려받아 고친 파일을 올립니다.</span></span>
               </button>
               <button className="choice" onClick={() => setEditing("new")} disabled={locked}>
                 <span><b>직접 입력</b><br /><span className="small muted">위원을 한 명씩 추가합니다.</span></span>
@@ -455,7 +465,7 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
               <thead>
                 <tr>
                   <th>위원</th><th>연락처</th><th>학사</th><th>최종학력</th><th>해외경험</th>
-                  <th className="num">초청/참여</th><th className="num">선호도</th><th></th>
+                  <th className="num">초청/참여</th><th className="num" title="K-PASS 평가횟수">K-PASS 평가</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -465,7 +475,10 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
                       <div className="who">
                         <b>{v.name}{invited.has(v.id) && <span className="badge info" style={{ marginLeft: 6 }}>초청함</span>}</b>
                         <span>{v.org || <span className="badge warn">소속 미입력</span>}</span>
-                        {v.expertise && <span className="faint">{v.expertise}</span>}
+                        {(v.expertise || v.techFields) && <span className="faint">{[v.expertise, v.techFields].filter(Boolean).join(" · ")}</span>}
+                        <span className="tags">
+                          {poolTags(v).map((t) => <span key={t.label} className={`badge ${t.cls}`} title={t.title}>{t.label}</span>)}
+                        </span>
                       </div>
                     </td>
                     <td className="small">
@@ -481,7 +494,7 @@ function Roster({ evaluation }: { evaluation: EvalWithCounts }) {
                       </div>
                     </td>
                     <td className="num">{v.pastInvited == null ? <span className="faint">-</span> : `${v.pastInvited}/${v.pastAttended ?? 0}`}</td>
-                    <td className="num">{v.preference ?? <span className="faint">-</span>}</td>
+                    <td className="num">{v.kpassEvalCount ?? <span className="faint">-</span>}</td>
                     <td className="nowrap" style={{ textAlign: "right" }}>
                       <button className="btn sm" onClick={() => setEditing(v)}>수정</button>{" "}
                       {!locked && <RowMenu items={[{ label: "명단에서 빼기", danger: true, disabled: invited.has(v.id), onClick: () => remove(v) }]} />}

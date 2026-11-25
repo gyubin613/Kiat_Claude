@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { NeedEvaluation, useAdmin, type EvalWithCounts } from "@/components/AdminShell";
 import { useEvalData } from "@/components/useEvalData";
 import { ConditionAnswer } from "@/components/ConditionReview";
+import SmsPrep from "@/components/SmsPrep";
 import { api, download, errMsg, Modal, RowMenu, useToast } from "@/components/ui";
 import { inviteCounts, isConditionPending, slotSummary } from "@/lib/summary";
 import { conflictHits } from "@/lib/profile";
@@ -16,7 +17,8 @@ type Filter = "all" | "pending" | "review" | "yes" | "no";
 function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
   const { reload: reloadShell } = useAdmin();
   const toast = useToast();
-  const { invites, byId, ready, reload } = useEvalData(evaluation.id, { pollMs: 15000 });
+  const { invites, evaluators, byId, ready, reload } = useEvalData(evaluation.id, { pollMs: 15000 });
+  const [sms, setSms] = useState(false);
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [slotFilter, setSlotFilter] = useState<string | null>(null);
@@ -75,9 +77,11 @@ function Responses({ evaluation }: { evaluation: EvalWithCounts }) {
         </div>
         <div className="row">
           <button className="btn" onClick={() => download(`/api/admin/evaluations/${evaluation.id}/export`)} disabled={!invites?.length}>엑셀 다운로드</button>
+          <button className="btn" onClick={() => setSms(true)} disabled={!invites?.length}>문자 알림 준비</button>
           <Link className="btn primary" href={`/admin/finalize?e=${evaluation.id}`}>최종 확정하기</Link>
         </div>
       </div>
+      {sms && invites && evaluators && <SmsPrep evaluation={evaluation} invites={invites} evaluators={evaluators} onClose={() => setSms(false)} />}
 
       <div className="strip">
         <span className="item"><span className="n">{counts.responded}</span><span className="l">/ {counts.total - counts.withdrawn}명 회신</span></span>

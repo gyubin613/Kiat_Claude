@@ -4,11 +4,13 @@ import Link from "next/link";
 import type { EvalWithCounts } from "./AdminShell";
 import { followupOf } from "@/lib/types";
 import { daysUntil, formatDateKo, formatSlot } from "@/lib/util";
+import { nextStep, STEPS } from "@/lib/guide";
 
 type Todo = { tone: "bad" | "warn" | "info"; text: string; href: string; go: string };
 
 /** 현재 평가에서 지금 처리해야 할 일만 모아 보여주는 첫 화면 */
-export default function Today({ evaluation: e }: { evaluation: EvalWithCounts }) {
+export default function Today({ evaluation: e, onEdit }: { evaluation: EvalWithCounts; onEdit?: () => void }) {
+  const n = nextStep(e);
   const c = e.counts;
   const q = `?e=${e.id}`;
   const active = c.total - c.withdrawn;
@@ -25,7 +27,7 @@ export default function Today({ evaluation: e }: { evaluation: EvalWithCounts })
     if (e.unread) todos.push({ tone: "bad", text: `새 위원 문의 ${e.unread}건에 답변이 필요합니다.`, href: `/admin/messages${q}`, go: "답변하기" });
     if (c.condPending) todos.push({ tone: "bad", text: `조건부 참석 문의 ${c.condPending}건에 답변하고 수락 여부를 정해 주세요.`, href: `/admin/responses${q}`, go: "답변하기" });
     if (e.recruitMode === "auto" && !e.autoRunning && e.rosterCount)
-      todos.push({ tone: "warn", text: "자동 섭외 순서를 확인하고 시작해 주세요. 시작하면 앞 순서부터 바로 메일이 나갑니다.", href: `/admin/priority${q}`, go: "순서 정하기" });
+      todos.push({ tone: "warn", text: "순차 자동 초청 순서를 확인하고 시작해 주세요. 시작하면 앞 순서부터 바로 메일이 나갑니다.", href: `/admin/priority${q}`, go: "순서 정하기" });
     if (c.notSent) todos.push({ tone: "warn", text: `초청 메일을 보내지 않은 위원이 ${c.notSent}명 있습니다.`, href: `/admin/invites${q}`, go: "메일 보내기" });
     if (active - c.no < e.seats && e.rosterCount)
       todos.push({ tone: "warn", text: `배석 ${e.seats}명 대비 초청 인원이 ${e.seats - (active - c.no)}명 부족합니다.`, href: `/admin/priority${q}`, go: "추가 섭외" });
@@ -40,7 +42,23 @@ export default function Today({ evaluation: e }: { evaluation: EvalWithCounts })
     if (short === 0 && active > 0) todos.push({ tone: "info", text: `참석 가능 위원이 배석 인원(${e.seats}명)을 채웠습니다.`, href: `/admin/finalize${q}`, go: "최종 확정" });
   }
 
+  // 맨 위 '지금 할 일'과 같은 내용은 아래 목록에서 뺀다
+  const rest = todos.filter((t) => t.href !== n.href);
+
   return (
+    <div className="stack" style={{ gap: 14 }}>
+    <div className={`guide-now big ${n.waiting ? "waiting" : ""}`} data-testid="next-step">
+      <div className="guide-text">
+        <span className="guide-tag">{n.waiting ? "진행 상황" : `지금 할 일 · ${n.step}단계 ${STEPS[n.step - 1].label}`}</span>
+        <b>{n.title}</b>
+        <span className="small">{n.detail}</span>
+      </div>
+      {n.step === 1 && onEdit ? (
+        <button className="btn primary" onClick={onEdit}>{n.cta} →</button>
+      ) : (
+        <Link className="btn primary nowrap" href={n.href}>{n.cta} →</Link>
+      )}
+    </div>
     <div className="hero">
       <div className="card summary">
         <div className="row between">
@@ -71,12 +89,12 @@ export default function Today({ evaluation: e }: { evaluation: EvalWithCounts })
         </div>
       </div>
       <div className="card">
-        <div className="card-head"><h2>할 일</h2><span className="small muted">{e.status === "finalized" ? "" : `${todos.length}건`}</span></div>
+        <div className="card-head"><h2>그 밖에 확인할 일</h2><span className="small muted">{e.status === "finalized" ? "" : `${rest.length}건`}</span></div>
         <div className="todo">
           {e.status === "finalized" ? (
             <Link href={`/admin/finalize${q}`}><span className="dot" style={{ background: "var(--ok)" }} />최종 확정을 마쳤습니다.<span className="go">결과 보기</span></Link>
-          ) : todos.length ? (
-            todos.map((t) => (
+          ) : rest.length ? (
+            rest.map((t) => (
               <Link key={t.text} href={t.href}>
                 <span className={`dot ${t.tone === "info" ? "" : t.tone}`} />
                 {t.text}
@@ -84,10 +102,11 @@ export default function Today({ evaluation: e }: { evaluation: EvalWithCounts })
               </Link>
             ))
           ) : (
-            <div className="done-line muted">지금 처리할 일이 없습니다. 위원 회신을 기다리는 중입니다.</div>
+            <div className="done-line muted">위의 &lsquo;지금 할 일&rsquo; 외에 따로 확인할 일은 없습니다.</div>
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 }
